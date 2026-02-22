@@ -1,0 +1,39 @@
+---
+layout: default
+title: NBA Topological Defensive Signatures
+---
+
+<section id="overview">
+    <h2>Overview</h2>
+    <p>
+        [cite_start]This project develops a unified geometric framework for modeling NBA team defense as a dynamic, spatially organized system rather than a collection of isolated events[cite: 8]. [cite_start]Moving past the era of discrete box-score statistics, we adopt a "team-as-entity" perspective[cite: 9, 35]. [cite_start]In this emerging paradigm, a defense is viewed as a cohesive "super-organism" and modeled as an "Active Matter" system that flows across the court to minimize specific energy costs[cite: 39, 42].
+    </p>
+</section>
+
+<section id="methodology">
+    <h2>Methodology</h2>
+    [cite_start]<p>Our framework operates at two distinct levels to model defensive behavior from structured interactions[cite: 9]:</p>
+    <ul>
+        <li>
+            [cite_start]<strong>Micro-Level (Physics-Based Potentials):</strong> We construct a physics-inspired potential energy model to govern defender positioning[cite: 10]. [cite_start]This includes cohesion forces pulling defenders to the team centroid [cite: 89][cite_start], occupancy penalties to discourage poor spacing [cite: 98][cite_start], collective ball pressure [cite: 111][cite_start], anisotropic offender attraction fields [cite: 131][cite_start], and basket anchoring[cite: 164].
+            
+        </li>
+        <li>
+            [cite_start]<strong>Macro-Level (Geometric Optimal Transport):</strong> We represent the resulting defensive configurations as spatial metric-measure structures[cite: 12]. [cite_start]We then compare teams using Gromov-Wasserstein optimal transport, which enables topology-aware similarity measurement independent of absolute court alignment[cite: 12].
+        </li>
+    </ul>
+</section>
+
+<section id="results">
+    <h2>Results</h2>
+    <p>
+        [cite_start]The model leverages 2015-16 SportVU optical tracking data, recording player and ball positions at 25 frames per second[cite: 47]. [cite_start]By merging tracking data with play-by-play logs and shot-level data from the NBA Stats API, we connect defensive spatial configurations with expected field goal (xFG) and points per shot (xPPS) metrics[cite: 52, 74]. [cite_start]This integrated dataset allows us to measure defensive features like closing speed and nearest-defender distance within fixed temporal windows preceding each shot[cite: 75, 76].
+    </p>
+</section>
+
+<section id="conclusion">
+    <h2>Conclusion</h2>
+    <p>
+        [cite_start]By integrating dynamical systems modeling with geometric optimal transport, this work establishes a principled approach to uncovering latent defensive archetypes[cite: 13]. [cite_start]It answers the core question of whether a basketball defense transition can be mathematically modeled as a Wasserstein Gradient Flow [cite: 45][cite_start], ultimately allowing us to formally characterize a team's "topological defensive identity"[cite: 13].
+    </p>
+</section>
