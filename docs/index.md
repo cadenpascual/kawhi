@@ -28,6 +28,7 @@ This project develops a unified geometric framework for modeling NBA team defens
 At the micro level, we construct a physics-inspired potential energy model that governs defender positioning through cohesion forces, occupancy penalties, collective ball pressure, anisotropic offender attraction fields, basket anchoring, and boundary constraints. These interacting potentials produce coordinated defensive formations that adapt to ball movement and offensive threat levels.
 
 At the macro level, we represent resulting defensive configurations as spatial metric-measure structures and compare teams using Gromov-Wasserstein optimal transport, enabling topology-aware similarity measurement independent of absolute court alignment. By integrating dynamical systems modeling with geometric optimal transport, this work establishes a principled approach to uncovering latent defensive archetypes and formally characterizing what we define as a team’s “topological defensive signature.”
+
 ---
 
 ## 2. Methodology: The Potential Energy Model
