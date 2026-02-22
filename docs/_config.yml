@@ -1,4 +1,4 @@
-jekyll-theme-NAME: cayman
+theme: jekyll-theme-cayman
 title: DSC180B Final Project
 description: Documentation for the DSC180B Final Project - NBA Shot Defense Analysis
 baseurl: "" # the subpath of your site, e.g. /blog
