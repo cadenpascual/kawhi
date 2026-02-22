@@ -15,7 +15,7 @@ def build_tracking_time_index(tracking_events: list[dict]) -> pd.DataFrame:
             continue
 
         gc_raw = [fr.get("game_clock", np.nan) for fr in frames]
-        gc = pd.to_numeric(gc_raw, errors="coerce").to_numpy()
+        gc = np.asarray(pd.to_numeric(gc_raw, errors="coerce"), dtype=float)
         valid = ~np.isnan(gc)
         if valid.sum() < 2:
             continue
@@ -49,84 +49,93 @@ def build_tracking_time_index(tracking_events: list[dict]) -> pd.DataFrame:
     if not df.empty:
         df = df[(df["gc_span"] > 0) & (df["n_frames_gc"] >= 10)]
     return df.reset_index(drop=True)
-from typing import Tuple, Optional, Dict, Any
-import numpy as np
-import pandas as pd
 
-def find_event_for_shot_by_clock(
-    event_index: pd.DataFrame,
-    gameid: int,
-    quarter: int,
-    shot_game_clock: float,
-    span_pad: float = 1.0,
-    max_center_diff: float = 2.0,
-    max_fallback_diff: float = 4.0,   # NEW: prevents bad matches
-) -> Tuple[Optional[int], Dict[str, Any]]:
+
+# VECTORIZED MATCHING 
+
+def attach_tracking_events_interval(shots_g, event_index, span_pad=5.0):
     """
-    Returns (event_list_idx, debug_info) where event_list_idx is an index into tracking_events, or None.
+    Vectorized matching of shots to their corresponding tracking event 
+    based on game clock intervals. 
+    
+    Includes fix for 'KeyError: shot_index' by using temporary IDs.
     """
-    df = event_index[
-        (event_index["gameid"] == gameid) &
-        (event_index["quarter"] == quarter)
-    ].copy()
+    shots = shots_g.copy()
+    events = event_index.copy()
 
-    if df.empty:
-        return None, {"reason": "no_events_for_game_quarter"}
+    # 1. Type Safety
+    shots["GAME_ID"] = shots["GAME_ID"].astype(int)
+    shots["PERIOD"] = shots["PERIOD"].astype(int)
+    events["gameid"] = events["gameid"].astype(int)
+    events["quarter"] = events["quarter"].astype(int)
+    events["gc_start"] = pd.to_numeric(events["gc_start"], errors="coerce")
+    events["gc_end"] = pd.to_numeric(events["gc_end"], errors="coerce")
+    events = events.dropna(subset=["gc_start", "gc_end"])
 
-    # Ensure numeric
-    df["gc_start"] = pd.to_numeric(df["gc_start"], errors="coerce")
-    df["gc_end"]   = pd.to_numeric(df["gc_end"], errors="coerce")
-    df = df.dropna(subset=["gc_start", "gc_end"])
-    if df.empty:
-        return None, {"reason": "no_valid_gc_spans"}
+    merged_results = []
+    
+    # 2. Group by Game & Period to minimize Cross-Join size
+    groups = shots.groupby(["GAME_ID", "PERIOD"])
+    
+    for (gid, qtr), shots_sub in groups:
+        events_sub = events[
+            (events["gameid"] == gid) & 
+            (events["quarter"] == qtr)
+        ]
+        
+        if events_sub.empty:
+            shots_sub = shots_sub.copy()
+            shots_sub["event_list_idx"] = np.nan
+            merged_results.append(shots_sub)
+            continue
+            
+        # 3. Cross Merge Setup
+        shots_sub = shots_sub.copy()
+        shots_sub["_join_key"] = 1
+        # Create a temporary unique ID for this chunk to safe-guard deduplication
+        shots_sub["_tmp_id"] = np.arange(len(shots_sub))
+        
+        events_sub = events_sub.copy()
+        events_sub["_join_key"] = 1
+        
+        # Merge
+        cross = pd.merge(
+            shots_sub,
+            events_sub[["event_list_idx", "gc_start", "gc_end", "_join_key"]],
+            on="_join_key"
+        )
+        
+        # 4. Logic Constraints
+        # Event starts at least 3s before shot (buildup)
+        cond_buildup = cross["gc_start"] >= (cross["game_clock"] + 3.0)
+        # Event ends near the shot (proximity)
+        cond_proximity = cross["gc_end"] <= (cross["game_clock"] + span_pad)
+        
+        valid = cross[cond_buildup & cond_proximity].copy()
+        
+        if valid.empty:
+            shots_sub.drop(columns=["_join_key", "_tmp_id"], inplace=True)
+            shots_sub["event_list_idx"] = np.nan
+            merged_results.append(shots_sub)
+            continue
 
-    # Event span is [gc_end, gc_start] because clock counts down
-    in_span = df[
-        (shot_game_clock <= (df["gc_start"] + span_pad)) &
-        (shot_game_clock >= (df["gc_end"]   - span_pad))
-    ].copy()
+        # 5. Deduplicate (Keep closest match)
+        valid["time_diff"] = (valid["gc_end"] - valid["game_clock"]).abs()
+        
+        best_matches = (
+            valid.sort_values("time_diff")
+            .drop_duplicates(subset=["_tmp_id"]) # Uses our temp ID, not "shot_index"
+        )
+        
+        # 6. Map back results using the temporary ID
+        mapping = best_matches.set_index("_tmp_id")["event_list_idx"]
+        shots_sub["event_list_idx"] = shots_sub["_tmp_id"].map(mapping)
+        
+        # Cleanup
+        shots_sub.drop(columns=["_join_key", "_tmp_id"], inplace=True)
+        merged_results.append(shots_sub)
 
-    # Always compute center fields for selection
-    def add_center_cols(d):
-        d["gc_center"] = (d["gc_start"] + d["gc_end"]) / 2.0
-        d["center_diff"] = np.abs(d["gc_center"] - shot_game_clock)
-        return d
-
-    if in_span.empty:
-        # fallback: choose closest by CENTER (more stable than boundary)
-        df2 = add_center_cols(df)
-        best = df2.loc[df2["center_diff"].idxmin()]
-
-        if float(best["center_diff"]) > max_fallback_diff:
-            return None, {
-                "reason": "fallback_center_diff_too_large",
-                "center_diff": float(best["center_diff"]),
-                "max_fallback_diff": float(max_fallback_diff),
-                "gc_start": float(best["gc_start"]),
-                "gc_end": float(best["gc_end"]),
-            }
-
-        return int(best["event_list_idx"]), {
-            "reason": "fallback_closest_center",
-            "center_diff": float(best["center_diff"]),
-            "gc_start": float(best["gc_start"]),
-            "gc_end": float(best["gc_end"]),
-        }
-
-    in_span = add_center_cols(in_span)
-    best = in_span.loc[in_span["center_diff"].idxmin()]
-
-    if float(best["center_diff"]) > max_center_diff:
-        return None, {
-            "reason": "center_diff_too_large",
-            "center_diff": float(best["center_diff"]),
-            "gc_start": float(best["gc_start"]),
-            "gc_end": float(best["gc_end"]),
-        }
-
-    return int(best["event_list_idx"]), {
-        "reason": "ok",
-        "center_diff": float(best["center_diff"]),
-        "gc_start": float(best["gc_start"]),
-        "gc_end": float(best["gc_end"]),
-    }
+    if not merged_results:
+        return shots_g
+        
+    return pd.concat(merged_results)

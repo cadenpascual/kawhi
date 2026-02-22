@@ -210,5 +210,5 @@ __marimo__/
 **/.DS_Store
 
 # data is too large to add
-data/processed/
+data/processed/tracking
 data/raw/7z/

@@ -24,7 +24,7 @@ def find_release_frame_idx(
     match : str
         - "closest": frame whose game_clock is closest to shot_game_clock
         - "prev": the latest frame with game_clock >= shot_game_clock (i.e., just BEFORE the shot)
-          (game_clock counts down)
+          (game_clock counts down)a
     max_time_diff : float
         Maximum allowed absolute time difference (seconds) between shot and matched frame.
         If exceeded, returns None.

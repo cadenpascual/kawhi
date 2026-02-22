@@ -1,101 +1,135 @@
-from __future__ import annotations
-from typing import Tuple
-import numpy as np
 import pandas as pd
+import json
+import os
+import glob
+import py7zr
+import tempfile
+from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from src.processing.sportvu_to_events import raw_sportvu_to_tracking_events
-from src.processing.tracking_cleaning import dedupe_tracking_events
+# --- IMPORT YOUR MODULES ---
+# Adjust these imports to match your folder structure if needed
 from src.processing.indexing import build_tracking_time_index
+from src.features.defense.computing_features import compute_defense_features_for_shots_refactored
+from src.processing.sportvu_to_events import convert_events
 
-from src.processing.indexing import find_event_for_shot_by_clock, build_tracking_time_index
-from src.features.defense_features import compute_pre_shot_defense_features
+# --- CONFIGURATION ---
+RAW_DATA_DIR = "../data/raw/7z/"  # Folder containing your .7z files
+PROCESSED_DIR = "../data/processed/def_features/"
+ALL_SHOTS_PARQUET = "../data/processed/shots/all_season_shots.parquet"
+MAX_WORKERS = 3  # Adjust based on your CPU cores
 
-
-def build_shot_defense_features(
-    game: dict,
-    shots: pd.DataFrame,
-    *,
-    span_pad: float = 2.0,
-    max_center_diff: float = 10.0,
-    match: str = "closest",
-    max_time_diff: float = 1.5,
-    fps: int = 25,
-    window_seconds: float = 1.0,
-    smooth_window: int = 5,
-) -> Tuple[pd.DataFrame, list[dict], pd.DataFrame]:
+def process_single_game_archive(file_path, all_shots_df):
     """
-    End-to-end:
-      raw SportVU + season shots -> per-shot defensive features aligned to tracking frames.
-
-    Returns:
-      shots_feat: shots_g with added columns for defense features + debug alignment info
-      tracking_events: cleaned tracking events (with frames)
-      shot_alignment_debug: per-shot debug table (event idx, diffs, reasons)
+    Worker function that uses the SOURCE FILENAME for the output name.
     """
-    game_id = int(game[0]['gameid'])
+    file_path = Path(file_path)
+    
+    # 1. Extract the "Stem" (filename without .7z or .json extension)
+    # Example: "01.01.2016.DAL.at.MIA"
+    file_stem = file_path.stem 
+    
+    try:
+        # --- A. LOAD DATA (Handle 7z or JSON) ---
+        raw_json_data = None
+        
+        if file_path.suffix == ".7z":
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                try:
+                    with py7zr.SevenZipFile(file_path, mode='r') as z:
+                        z.extractall(path=tmp_dir)
+                    extracted_files = glob.glob(os.path.join(tmp_dir, "*.json"))
+                    if not extracted_files: return f"Skipped: No JSON found inside {file_path.name}"
+                    with open(extracted_files[0], "r") as f:
+                        raw_json_data = json.load(f)
+                except Exception as e:
+                    return f"7z Extraction Error on {file_path.name}: {e}"
 
-    # --- shots for this game ---
-    shots_g = shots.loc[shots["GAME_ID"].astype(int) == game_id].copy()
-    shots_g = shots_g.reset_index(drop=True)
+        elif file_path.suffix == ".json":
+            with open(file_path, "r") as f:
+                raw_json_data = json.load(f)
+        
+        if raw_json_data is None: return f"Skipped: No data loaded for {file_path.name}"
 
-    # --- tracking events ---
-    tracking_events = raw_sportvu_to_tracking_events(game)
-    tracking_events = dedupe_tracking_events(tracking_events)
-    tracking_time_index = build_tracking_time_index(tracking_events)
+        # --- B. CONVERT RAW TO STANDARD FORMAT ---
+        tracking_events = convert_events(raw_json_data)
+        if not tracking_events: return f"Skipped: No events found in {file_path.name}"
+        
+        game_id = tracking_events[0]["gameid"]
+        
+        # --- C. DEFINE OUTPUT FILENAME ---
+        # We combine the original filename with the Game ID for safety.
+        # Output: defense_01.01.2016.DAL.at.MIA_21500492.parquet
+        output_filename = f"defense_{file_stem}_{game_id}.parquet"
+        out_file = Path(PROCESSED_DIR) / output_filename
+        
+        if out_file.exists():
+            return f"Skipped: {output_filename} already exists."
 
-    # (optional) if you want to reuse your pbp alignment logic, you can.
-    # For now, we align shots directly by game clock using your time index.
+        # --- D. FILTER SHOTS ---
+        shots_game = all_shots_df[all_shots_df["GAME_ID"] == game_id].copy()
+        if shots_game.empty:
+            return f"Skipped: No shots found in DB for {game_id}"
 
-    feats_rows = []
-    debug_rows = []
+        # --- E. COMPUTE FEATURES ---
+        event_index = build_tracking_time_index(tracking_events)
+        
+        def_feats_df = compute_defense_features_for_shots_refactored(
+            shots_g=shots_game,
+            tracking_events=tracking_events,
+            event_index=event_index,
+            verbose_summary=False,
+            include_accel=True, 
+            include_game_shot_clock=True 
+        )
+        
+        # --- F. SAVE ---
+        if not def_feats_df.empty:
+            def_feats_df.to_parquet(out_file, index=False)
+            return f"Success: {output_filename} ({len(def_feats_df)} shots)"
+        else:
+            return f"Warning: {output_filename} processed but 0 features."
 
-    for i, shot in shots_g.iterrows():
-        shot_gc = float(shot.get("game_clock", np.nan))
-        quarter = int(shot.get("PERIOD", np.nan))
-        offense_team_id = int(shot["TEAM_ID"])
-        shooter_id = int(shot["PLAYER_ID"])
+    except Exception as e:
+        return f"CRITICAL ERROR on {file_path.name}: {str(e)}"
 
-        ev_idx, info = find_event_for_shot_by_clock(tracking_time_index, game_id, quarter, shot_gc)
+# ==============================================================================
+# 3. MAIN PIPELINE
+# ==============================================================================
 
-        debug = {
-            "shot_row": int(i),
-            "GAME_ID": game_id,
-            "PERIOD": quarter,
-            "shot_gc": shot_gc,
-            "event_list_idx": ev_idx,
-            **(info or {}),
+def run_season_pipeline():
+    os.makedirs(PROCESSED_DIR, exist_ok=True)
+    
+    print(f"Loading shots from: {ALL_SHOTS_PARQUET}")
+    try:
+        all_shots = pd.read_parquet(ALL_SHOTS_PARQUET)
+        # Ensure GAME_ID is int for matching
+        all_shots["GAME_ID"] = all_shots["GAME_ID"].astype(int)
+    except Exception as e:
+        print(f"Critial Error: Could not load shots file. {e}")
+        return
+
+    # Look for both 7z and json files
+    files = glob.glob(os.path.join(RAW_DATA_DIR, "*.7z")) + \
+            glob.glob(os.path.join(RAW_DATA_DIR, "*.json"))
+            
+    print(f"Found {len(files)} files to process in {RAW_DATA_DIR}")
+
+    # Use Multiprocessing
+    with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        # Submit jobs
+        futures = {
+            executor.submit(process_single_game_archive, f, all_shots): f 
+            for f in files
         }
+        
+        # Monitor progress
+        total = len(files)
+        for i, future in enumerate(as_completed(futures)):
+            result = future.result()
+            print(f"[{i+1}/{total}] {result}")
 
-        if ev_idx is None:
-            feats_rows.append({"shot_row": int(i), "error": "no_event_match"})
-            debug_rows.append(debug)
-            continue
+    print("\nPipeline Complete.")
 
-        frames = tracking_events[int(ev_idx)]["frames"]
-
-        release_idx, rinfo = build_tracking_time_index(
-            event_frames=frames,
-            shot_game_clock=shot_gc,
-            match=match,
-            max_time_diff=max_time_diff,
-        )
-        debug.update({f"release_{k}": v for k, v in (rinfo or {}).items()})
-        debug["release_idx"] = release_idx
-
-        feats = compute_pre_shot_defense_features(
-            event_frames=frames,
-            release_frame_idx=release_idx,
-            shooter_id=shooter_id,
-            offense_team_id=offense_team_id,
-            fps=fps,
-            window_seconds=window_seconds,
-            smooth_window=smooth_window,
-        )
-        feats_rows.append({"shot_row": int(i), **feats})
-        debug_rows.append(debug)
-
-    feats_df = pd.DataFrame(feats_rows)
-    debug_df = pd.DataFrame(debug_rows)
-
-    shots_feat = shots_g.merge(feats_df, left_index=True, right_on="shot_row", how="left").drop(columns=["shot_row"])
-    return shots_feat, tracking_events, debug_df
+if __name__ == "__main__":
+    run_season_pipeline()

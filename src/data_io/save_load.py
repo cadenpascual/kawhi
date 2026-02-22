@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-DATA_DIR = Path("data")
+ROOT = Path.cwd().parent
+DATA_DIR = ROOT / "data"
 
 def load_tracking_json(game_id):
     path = DATA_DIR / "tracking" / f"{game_id}.json"

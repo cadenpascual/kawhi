@@ -2,62 +2,65 @@ import json
 from pathlib import Path
 import pandas as pd
 
-
 from src.utils.casting import safe_int, safe_float
 from src.tracking.possession import identify_possession
 from src.processing.pbp.context import pbp_context
 from src.processing.pbp.indexing import build_pbp_index
 from src.tracking.event_summaries import event_clock_span, first_ball_xy
 
-def sportvu_game_to_processed_events(game: dict, pbp: pd.DataFrame) -> list[dict]:
-    game_id = int(game["gameid"])
-    pbp_idx = build_pbp_index(pbp)
+# RENAME THIS FUNCTION
+def convert_events(game_dict: dict) -> list[dict]:  # <--- NEW NAME
+    """
+    Convert raw SportVU JSON dictionary into the standard tracking_events format.
+    """
+    tracking_events = []
+    
+    # Check for valid game dictionary
+    if not game_dict or "events" not in game_dict:
+        return []
 
-    frame_counter = 0
-    events_out: list[dict] = []
+    try:
+        gameid = int(game_dict.get("gameid", 0))
+    except:
+        gameid = 0
 
-    for event in game.get("events", []):
-        moments = event.get("moments")
+    for ev in game_dict["events"]:
+        moments = ev.get("moments")
         if not moments:
             continue
 
-        event_id = int(event.get("eventId"))
-
-        # lookup pbp row (fast)
         try:
-            row = pbp_idx.loc[(game_id, event_id)]
-        except KeyError:
-            continue
-
-        possession_team_id = safe_int(identify_possession(row))
-        quarter = int(moments[0][0])
+            quarter = int(moments[0][0])
+        except:
+            quarter = 0
 
         event_obj = {
-            "gameid": game_id,
-            "event_id": event_id,
+            "gameid": gameid,
+            "event_id": ev.get("eventId"),     # <--- WE NEED THIS
+            "event_id_raw": ev.get("eventId"), 
             "quarter": quarter,
-            "possession_team_id": possession_team_id,
-
-            # ✅ add pbp metadata for play-type classification
-            **pbp_context(row),
-
             "frames": []
         }
 
+        # ... (keep your existing frame processing logic here) ...
+        # Copy the frame processing loop from your previous code
+        frame_counter = 0
         for moment in moments:
             if moment is None or len(moment) < 6:
                 continue
+            
+            coords = moment[5]
+            if not coords: continue
 
             frame_counter += 1
-
             frame = {
                 "frame_id": frame_counter,
                 "game_clock": safe_float(moment[2]),
                 "shot_clock": safe_float(moment[3]),
                 "ball": {
-                    "x": safe_float(moment[5][0][2]),
-                    "y": safe_float(moment[5][0][3]),
-                    "z": safe_float(moment[5][0][4]),
+                    "x": safe_float(coords[0][2]),
+                    "y": safe_float(coords[0][3]),
+                    "z": safe_float(coords[0][4]),
                 },
                 "players": [
                     {
@@ -67,26 +70,15 @@ def sportvu_game_to_processed_events(game: dict, pbp: pd.DataFrame) -> list[dict
                         "y": safe_float(p[3]),
                         "z": safe_float(p[4]),
                     }
-                    for p in moment[5][1:]
+                    for p in coords[1:]
                 ],
             }
-
             event_obj["frames"].append(frame)
 
-        if not event_obj["frames"]:
-            continue
+        if event_obj["frames"]:
+            tracking_events.append(event_obj)
 
-        # ✅ event-level summaries for indexing/matching without rescanning frames
-        gc_start, gc_end = event_clock_span(event_obj)
-        bx, by = first_ball_xy(event_obj)
-        event_obj["gc_start"] = gc_start
-        event_obj["gc_end"] = gc_end
-        event_obj["ball_x0"] = bx
-        event_obj["ball_y0"] = by
-
-        events_out.append(event_obj)
-
-    return events_out
+    return tracking_events
 
 
 # raw SportVU JSON to processed tracking events
