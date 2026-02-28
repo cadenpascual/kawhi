@@ -109,8 +109,20 @@ Your current “impact” is shot-based, so it won’t capture:
 Your xFG / xPPS models were trained at shot time, but you’re now using them pre-shot. That’s fine as long as you interpret IST as a latent threat, not a literal probability of a shot.
 In other words:
 
-IST ≠ “they will shoot”
 
-IST ≈ “defense must care right now”
+Variables used: 
+Index(['GAME_ID', 'SHOT_EVENT_ID', 'tracking_event_id', 'release_frame_idx',
+       'event_list_idx', 'PERIOD', 'game_clock', 'PLAYER_ID', 'TEAM_ID',
+       'x_ft', 'y_ft', 'xFG_offense', 'xPPS_offense', 'SHOT_MADE_FLAG',
+       'close_def_dist_release', 'closest_def_dist', 'close_def_id',
+       'num_defenders_tracked', 'w0_close_def_dist_mean',
+       'w0_close_def_dist_min', 'w0_shooter_speed_mean',
+       'w0_shooter_speed_max', 'w0_def_speed_mean', 'w0_closing_speed_mean',
+       'w1_close_def_dist_mean', 'w1_close_def_dist_min',
+       'w1_shooter_speed_mean', 'w1_shooter_speed_max', 'w1_def_speed_mean',
+       'w1_closing_speed_mean', 'shooter_speed', 'game_clock_tracking',
+       'shot_clock_tracking', 'w0_shooter_accel_mean', 'w1_shooter_accel_mean',
+       'Real_IST', 'Real_Q', 'Real_O', 'Real_S', 'Empirical_IST'],
+      dtype='object')
 
-That’s defensively correct.
+Variables filtered down to:

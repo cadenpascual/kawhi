@@ -107,3 +107,46 @@ def build_player_maps(
 
     meta = pd.DataFrame(rows).sort_values("attempts", ascending=False).reset_index(drop=True)
     return maps, meta
+
+def build_player_maps(
+    shots: pd.DataFrame,
+    min_attempts: int = 100,  # Lowered slightly
+    value_col: str = "xPPS_offense",
+    grid_kwargs: dict | None = None,
+    smooth_sigma: float = 1.25,
+):
+    if grid_kwargs is None:
+        grid_kwargs = {}
+    xedges, yedges = make_grid(**grid_kwargs)
+
+    df = shots.copy()
+    if "SHOT_ATTEMPTED_FLAG" in df.columns:
+        df = df[df["SHOT_ATTEMPTED_FLAG"] == 1]
+
+    # 1. BUILD THE LEAGUE AVERAGE MAP FIRST
+    league_map = make_player_maps(
+        df, xedges, yedges, value_col=value_col, smooth_sigma=smooth_sigma
+    )
+    
+    counts = df.groupby("PLAYER_ID").size()
+    eligible = counts[counts >= min_attempts].index.tolist()
+
+    maps = {}
+    rows = []
+    
+    # 2. Add League Average as a special ID (e.g., ID 0)
+    maps[0] = league_map
+    rows.append({"PLAYER_ID": 0, "PLAYER_NAME": "LEAGUE_AVERAGE", "attempts": league_map["attempt_count"]})
+
+    # 3. Build the rest of the eligible players
+    for pid in eligible:
+        dfp = df[df["PLAYER_ID"] == pid]
+        pm = make_player_maps(
+            dfp, xedges, yedges, value_col=value_col, smooth_sigma=smooth_sigma
+        )
+        maps[int(pid)] = pm
+        pname = dfp["PLAYER_NAME"].iloc[0] if "PLAYER_NAME" in dfp.columns else str(pid)
+        rows.append({"PLAYER_ID": int(pid), "PLAYER_NAME": pname, "attempts": pm["attempt_count"]})
+
+    meta = pd.DataFrame(rows).sort_values("attempts", ascending=False).reset_index(drop=True)
+    return maps, meta

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import pandas as pd
+from typing import Dict, Any, List, Tuple, Optional
 
 from src.utils.casting import safe_int, safe_float
 from src.tracking.possession import identify_possession
@@ -9,52 +10,40 @@ from src.processing.pbp.indexing import build_pbp_index
 from src.tracking.event_summaries import event_clock_span, first_ball_xy
 
 # RENAME THIS FUNCTION
-def convert_events(game_dict: dict) -> list[dict]:  # <--- NEW NAME
+def parse_sportvu_kinematics(game_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Convert raw SportVU JSON dictionary into the standard tracking_events format.
+    Transforms unstructured SportVU JSON into a standardized temporal array 
+    suitable for dynamical systems modeling.
     """
-    tracking_events = []
-    
-    # Check for valid game dictionary
     if not game_dict or "events" not in game_dict:
         return []
 
-    try:
-        gameid = int(game_dict.get("gameid", 0))
-    except:
-        gameid = 0
+    gameid = safe_int(game_dict.get("gameid"), default=0)
+    parsed_events = []
 
     for ev in game_dict["events"]:
-        moments = ev.get("moments")
-        if not moments:
-            continue
+        moments = ev.get("moments", [])
+        if not moments: continue
 
-        try:
-            quarter = int(moments[0][0])
-        except:
-            quarter = 0
-
+        quarter = safe_int(moments[0][0], default=0) if moments[0] else 0
+        
         event_obj = {
             "gameid": gameid,
-            "event_id": ev.get("eventId"),     # <--- WE NEED THIS
+            "event_id": ev.get("eventId"),
             "event_id_raw": ev.get("eventId"), 
             "quarter": quarter,
             "frames": []
         }
 
-        # ... (keep your existing frame processing logic here) ...
-        # Copy the frame processing loop from your previous code
-        frame_counter = 0
-        for moment in moments:
-            if moment is None or len(moment) < 6:
+        # Vectorized assembly of the state space per frame
+        for frame_id, moment in enumerate(moments, start=1):
+            if not moment or len(moment) < 6 or not moment[5]: 
                 continue
             
             coords = moment[5]
-            if not coords: continue
-
-            frame_counter += 1
-            frame = {
-                "frame_id": frame_counter,
+            
+            event_obj["frames"].append({
+                "frame_id": frame_id,
                 "game_clock": safe_float(moment[2]),
                 "shot_clock": safe_float(moment[3]),
                 "ball": {
@@ -69,16 +58,14 @@ def convert_events(game_dict: dict) -> list[dict]:  # <--- NEW NAME
                         "x": safe_float(p[2]),
                         "y": safe_float(p[3]),
                         "z": safe_float(p[4]),
-                    }
-                    for p in coords[1:]
-                ],
-            }
-            event_obj["frames"].append(frame)
+                    } for p in coords[1:]
+                ]
+            })
 
         if event_obj["frames"]:
-            tracking_events.append(event_obj)
+            parsed_events.append(event_obj)
 
-    return tracking_events
+    return parsed_events
 
 
 # raw SportVU JSON to processed tracking events
