@@ -14,8 +14,8 @@ from src.features.defense.computing_features_updated import build_defensive_conf
 from src.processing.sportvu_to_events import parse_sportvu_kinematics
 
 # --- CONFIGURATION ---
-RAW_DATA_DIR = "../data/raw/7z_test/"
-PROCESSED_DIR = "../data/processed/def_features_test"
+RAW_DATA_DIR = "../data/raw/7z/"
+PROCESSED_DIR = "../data/processed/traj_features"
 ALL_SHOTS_PARQUET = "../data/processed/shots/all_season_shots.parquet"
 MAX_WORKERS = max(1, os.cpu_count() - 1)  # Automatically use all but 1 of your CPU cores
 
@@ -73,7 +73,7 @@ def process_single_game_archive(file_path):
         game_id = int(tracking_events[0]["gameid"])
         
         # --- C. CHECK OUTPUT EXISTANCE ---
-        output_filename = f"defense_{file_stem}_{game_id}.parquet"
+        output_filename = f"traj_{file_stem}_{game_id}.parquet"
         out_file = Path(PROCESSED_DIR) / output_filename
         
         if out_file.exists():

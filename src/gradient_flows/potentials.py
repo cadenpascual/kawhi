@@ -1,15 +1,7 @@
 import jax
 import jax.numpy as jnp
-import jax.nn
 from jax import jit, vmap
 from functools import partial
-
-# --- OPTIMAL TRANSPORT IMPORTS ---
-from ott.geometry import pointcloud
-from ott.solvers.linear import sinkhorn
-from ott.problems.linear import linear_problem 
-from ott.geometry.pointcloud import PointCloud
-from ott.solvers.linear import implicit_differentiation as imp_diff
 
 # --- Default Parameters ---
 params = {
@@ -21,7 +13,7 @@ params = {
     'attraction_weight': jnp.array(12.0),
     'basket_gravity_weight': jnp.array(2.0),
     'basket_gravity_sigma': jnp.array(12.0),
-    'field_weight': jnp.array(-8.0), # Will be converted to absolute value for OT Cost
+    'field_weight': jnp.array(-8.0), # Negative for attraction
     'global_ball_weight': jnp.array(0.05),
 
     # Threat, Sparsity & Occupancy
@@ -36,13 +28,19 @@ params = {
     'sigma_long': jnp.array(8.0),   # Long reach towards the perimeter
     'sigma_wide': jnp.array(2.5),   # Narrow width (stay in lane)
     'cushion_dist': jnp.array(3.0), # Stand 3ft off the offender
+
+    # IST Params
+    'ist_q_exp': jnp.array(2.16),
+    'ist_o_exp': jnp.array(1.03),
 }
 
 # --- Helper Functions ---
 
 @jit
 def softmin(x, k):
-    """Smooth, differentiable approximation of the min function."""
+    """
+    Smooth, differentiable approximation of the min function.
+    """
     y = -k * x
     y_max = jnp.max(y)
     log_sum_exp = y_max + jnp.log(jnp.sum(jnp.exp(y - y_max)))
@@ -50,26 +48,50 @@ def softmin(x, k):
 
 @jit
 def _get_rotated_diff(pos, center, rotation_angle):
+    """
+    Rotates the coordinate system so the 'long' axis points to the basket.
+    """
     dx = pos[0] - center[0]
     dy = pos[1] - center[1]
+    
+    # Rotation Matrix
     cos_a = jnp.cos(rotation_angle)
     sin_a = jnp.sin(rotation_angle)
+    
+    # Rotate coordinates
     x_prime = dx * cos_a + dy * sin_a
     y_prime = -dx * sin_a + dy * cos_a
+    
     return x_prime, y_prime
 
 @jit
 def _calculate_offset_attractor(off_pos, basket_pos, params):
+    """
+    Calculates the 'Ideal' position: slightly shifted toward the basket.
+    """
+    # Vector from Offender to Basket
     vec_to_hoop = basket_pos - off_pos
-    dist_to_hoop = jnp.sqrt(jnp.sum(vec_to_hoop**2) + 1e-6)
+    dist_to_hoop = jnp.linalg.norm(vec_to_hoop) + 1e-6
     unit_vec = vec_to_hoop / dist_to_hoop
+    
+    # The 'Cushion' Target
     target_pos = off_pos + params['cushion_dist'] * unit_vec
+    
+    # The Rotation Angle (angle of the vector to the hoop)
     rotation_angle = jnp.arctan2(vec_to_hoop[1], vec_to_hoop[0])
+    
     return target_pos, rotation_angle
 
 @jit
 def _calculate_occupancy_penalty(all_defenders_pos, params):
+    """
+    Calculates a penalty based on the overlap of influence Gaussians between
+    all pairs of defenders.
+    We use a simplified circular Gaussian for this.
+    """
+    # Use 'sigma_wide' as a proxy for personal space radius
     sigma_sq = jnp.square(params['sigma_wide'])
+    
     idx1, idx2 = jnp.triu_indices(5, k=1)
 
     def _pair_overlap(i, j):
@@ -81,171 +103,107 @@ def _calculate_occupancy_penalty(all_defenders_pos, params):
     total_overlap = jnp.sum(vmap(_pair_overlap)(idx1, idx2))
     return params['occupancy_weight'] * total_overlap
 
-
 @jit
-def _calculate_lane_blocking_penalty(defenders, offenders, basket_pos, params):
-    """
-    Penalizes defenders for not being directly on the line between the offenders and the basket.
-    """
-    # 1. Calculate the ideal defensive point for every offender
-    # Shape of offenders: (5, 2), basket_pos: (2,)
-    vec_to_basket = basket_pos - offenders
-    dist_to_basket = jnp.linalg.norm(vec_to_basket, axis=-1, keepdims=True)
-    
-    # Normalize to get direction (add epsilon to prevent div by zero)
-    dir_to_basket = vec_to_basket / (dist_to_basket + 1e-6)
-    
-    # Place ideal points 'cushion_dist' away from offenders, towards the basket
-    # (We use jnp.minimum so we don't accidentally put the point behind the basket)
-    actual_cushion = jnp.minimum(params['cushion_dist'], dist_to_basket * 0.8)
-    ideal_points = offenders + dir_to_basket * actual_cushion
-    
-    # 2. Calculate distances from every defender to every ideal point
-    # Resulting shape: (5, 5) cost matrix
-    diffs = defenders[:, None, :] - ideal_points[None, :, :]
-    dist_matrix = jnp.linalg.norm(diffs, axis=-1)
-    
-    # 3. Softmin to find the closest ideal point for each defender
-    # This automatically associates a defender with the closest driving lane
-    import jax.nn as jnn
-    closest_ideal_dists = jnp.sum(jnn.softmax(-params['k_softmin'] * dist_matrix, axis=1) * dist_matrix, axis=1)
-    
-    # Return squared distance as an energy penalty
-    return jnp.sum(closest_ideal_dists ** 2) * params.get('lane_blocking_weight', 2.0)
-
+def _calculate_ist_penalty(all_defenders_pos, offenders_pos, q_values, ball_pos, basket_pos, params):
+    def single_ist(off_pos, q_val):
+        k_smooth = params.get('ist_k_smooth', 10.0)
+        # 1. B-Traj (Distance to ball) 
+        ball_dist = jnp.linalg.norm(off_pos - ball_pos)
+        b_val = 0.4 + 0.6 * (1.0 / (1.0 + jnp.exp(0.3 * (ball_dist - 18.0))))
+        
+        # 2. Sim Weights using the REAL q_val passed from the dataframe
+        sim_weight = jnp.maximum((q_val ** params['ist_q_exp']) * b_val, 0.35)
+        
+        # 3. Openness (O) with softmin
+        dists_to_defs = jnp.linalg.norm(all_defenders_pos - off_pos, axis=1)
+        closest_dist = softmin(dists_to_defs, k=k_smooth)
+        openness = jnp.clip(closest_dist / 6.0, 0.5, 1.5)
+        
+        return sim_weight * (openness ** params['ist_o_exp'])
+        
+    weight = params.get('ist_weight', 0.0)
+    # vmap across all 5 offenders AND their 5 q_values simultaneously
+    all_ists = vmap(single_ist)(offenders_pos, q_values)
+    return weight * jnp.sum(all_ists)
 
 # --- Potential Energy Calculation ---
 
 @jit
-def calculate_dynamic_ist(defenders, offenders, ball_pos, q_values, params):
-    """
-    Calculates normalized IST dynamically based on simulated defender positions.
-    """
-    # 1. Openness (O) - Using SIMULATED defenders
-    diffs = offenders[:, None, :] - defenders[None, :, :]
-    dist_matrix = jnp.linalg.norm(diffs, axis=-1)
+def _total_energy_per_defender(current_defender_pos, all_defenders_pos, offenders_pos, ball_pos, basket_pos, params):
     
-    # Distance to nearest defender (clipped to prevent zero-division in gradients)
-    O = jnp.clip(jnp.min(dist_matrix, axis=1), 0.1, 25.0)
-    
-    # 2. Ball Factor (B)
-    dist_to_ball = jnp.linalg.norm(offenders - ball_pos, axis=-1)
-    k = 0.3
-    d0 = 18.0
-    b_floor = 0.4
-    B = b_floor + (1.0 - b_floor) / (1.0 + jnp.exp(k * (dist_to_ball - d0)))
-    
-    # 3. Pull Learnable Exponents from params
-    q_exp = params.get('ist_q_exp', 2.0)
-    o_exp = params.get('ist_o_exp', 1.0)
-    
-    # 4. Calculate Raw IST
-    raw_ist = (q_values ** q_exp) * (O ** o_exp) * B
-    
-    # 5. Normalize so "mass" always equals 5.0
-    total_ist = jnp.sum(raw_ist) + 1e-6
-    normalized_ist = (raw_ist / total_ist) * 5.0
-    
-    return normalized_ist
+    # 1. BASKET ANCHOR (Safe Home)
+    dist_sq_basket = jnp.sum((current_defender_pos - basket_pos)**2)
+    E_gravity = -params['basket_gravity_weight'] * jnp.exp(-dist_sq_basket / (2 * params['basket_gravity_sigma']**2))
 
-@jit
-def _ot_tactical_energy(all_defenders_pos, offenders_pos, basket_pos, params, offender_weights):
-    # 1. Ensure weights are NEVER zero or near-zero
-    a_weights = jnp.ones(5) / 5.0 
-    # Add a tiny epsilon and re-normalize to prevent singular systems
-    b_weights = offender_weights + 1e-6
-    b_weights = b_weights / jnp.sum(b_weights)
-    
-    # 2. Setup Geometry
-    def get_cushion(off_pos):
-        target, _ = _calculate_offset_attractor(off_pos, basket_pos, params)
-        return target
-    ideal_spots = vmap(get_cushion)(offenders_pos)
-    
-    # Use a slightly larger epsilon for the PointCloud (blurrier is safer)
-    geom = PointCloud(all_defenders_pos, ideal_spots, epsilon=params.get('sinkhorn_epsilon', 1.0))
-    prob = linear_problem.LinearProblem(geom, a=a_weights, b=b_weights)
-    
-    # 3. THE CRITICAL CHANGE: 
-    # Set implicit_diff=None to use unrolled differentiation.
-    # This avoids the Lineax/Equinox linear solver crash.
-    ot_solver = sinkhorn.Sinkhorn(
-        threshold=1e-2, 
-        max_iterations=100, 
-        lse_mode=True,
-        implicit_diff=None  # <--- THIS IS THE FIX
-    )
-    
-    out = ot_solver(prob)
-    
-    # Calculate energy
-    # We use stop_gradient on the weights if we only want to optimize defender positions
-    return jnp.abs(params.get('field_weight', 5.0)) * jnp.sum(out.matrix * geom.cost_matrix)
-
-@jit
-def total_energy(defenders, offenders, ball, basket_pos, params, q_values):
-    """
-    Calculates the total energy by combining global team structures (Sinkhorn)
-    and independent player constraints. Now includes dynamic IST tracking!
-    """
-    # NEW STEP: Calculate dynamic IST using simulated defenders!
-    # Because 'defenders' is passed in here, JAX's autograd will build 
-    # gradients that push defenders toward the most dangerous players.
-    live_offender_weights = calculate_dynamic_ist(defenders, offenders, ball, q_values, params)
-
-    # 1. Calculate Optimal Transport Assignments (Returns shape (5,))
-    # Pass the dynamically calculated live weights instead of static ones
-    E_ot_field = _ot_tactical_energy(defenders, offenders, basket_pos, params, live_offender_weights)
-    
-    # 2. Calculate Individual Defender Potentials
-    def single_defender_energy(current_defender_pos):
-        # Basket Gravity
-        dist_sq_basket = jnp.sum((current_defender_pos - basket_pos)**2)
-        E_gravity = -params['basket_gravity_weight'] * jnp.exp(-dist_sq_basket / (2 * params['basket_gravity_sigma']**2))
+    # 2. OFFENDER ATTRACTION (Anisotropic Field)
+    def single_offender_potential(off_pos):
+        target_pos, angle = _calculate_offset_attractor(off_pos, basket_pos, params)
+        dx_rot, dy_rot = _get_rotated_diff(current_defender_pos, target_pos, angle)
         
-        # Cohesion (Rubber Band)
-        team_centroid = jnp.mean(defenders, axis=0)
-        dist_to_centroid = jnp.sqrt(jnp.sum((current_defender_pos - team_centroid)**2) + 1e-6)
-        E_cohesion = params['cohesion_weight'] * jnp.maximum(0.0, dist_to_centroid - params['formation_radius'])
+        exponent = -((dx_rot**2 / (2 * params['sigma_long']**2)) + 
+                     (dy_rot**2 / (2 * params['sigma_wide']**2)))
+                       
+        dist_off_to_ball = jnp.linalg.norm(off_pos - ball_pos)
+        threat_scale = 1.0 + params['offender_threat_scale'] * jnp.exp(-(dist_off_to_ball / params['offender_threat_dist'])**2)
+        dynamic_weight = params['field_weight'] * threat_scale
         
-        # Boundaries
-        dist_to_left = current_defender_pos[0] - 0.0
-        dist_to_right = 94.0 - current_defender_pos[0]
-        dist_to_bottom = current_defender_pos[1] - 0.0
-        dist_to_top = 50.0 - current_defender_pos[1]
-        buffer = 2.0
-        p = jnp.sum(jnp.array([
-            jnp.maximum(0.0, buffer - dist_to_left)**2,
-            jnp.maximum(0.0, buffer - dist_to_right)**2,
-            jnp.maximum(0.0, buffer - dist_to_bottom)**2,
-            jnp.maximum(0.0, buffer - dist_to_top)**2
-        ]))
-        E_boundary = p * 10.0
-        
-        return E_gravity + E_cohesion + E_boundary
-
-    E_indiv = vmap(single_defender_energy)(defenders)
+        return dynamic_weight * jnp.exp(exponent)
     
-    # 3. Calculate Collective Ball Pressure (Who guards the ball?)
+    E_field = jnp.sum(vmap(single_offender_potential)(offenders_pos))
+
+    # 3. COLLECTIVE TEAM-LEVEL POTENTIALS
+
+    # This prevents the 'pushed out' problem by pulling rogue players back to the group
+    team_centroid = jnp.mean(all_defenders_pos, axis=0)
+    dist_to_centroid = jnp.linalg.norm(current_defender_pos - team_centroid)
+    
+    # Linear pull: 0 if inside the radius, grows linearly if they drift too far
+    E_cohesion = params['cohesion_weight'] * jnp.maximum(0, dist_to_centroid - params['formation_radius'])
+
     def _calculate_ball_pressure(defender_pos):
-        dist_sq_ball = jnp.sum((defender_pos - ball)**2)
-        dist_to_ball = jnp.sqrt(dist_sq_ball + 1e-6)
+        dist_sq_ball = jnp.sum((defender_pos - ball_pos)**2)
+        dist_to_ball = jnp.sqrt(dist_sq_ball)
         blend_factor = jax.nn.sigmoid(-params['blending_k'] * (dist_to_ball - params['blending_radius']))
+        
         E_local = -params['attraction_weight'] * jnp.exp(-dist_sq_ball / (2 * params['sigma_wide']**2))
         E_global = params['global_ball_weight'] * dist_sq_ball
         return (blend_factor * E_local) + E_global
+    
+    def boundary_penalty(pos):
+        # Soft 'spring' at the edges of the 94x50 court
+        dist_to_left = pos[0] - 0
+        dist_to_right = 94 - pos[0]
+        dist_to_bottom = pos[1] - 0
+        dist_to_top = 50 - pos[1]
+        
+        # Penalize getting within 2 feet of any boundary
+        buffer = 2.0
+        p = jnp.sum(jnp.array([
+            jnp.maximum(0, buffer - dist_to_left)**2,
+            jnp.maximum(0, buffer - dist_to_right)**2,
+            jnp.maximum(0, buffer - dist_to_bottom)**2,
+            jnp.maximum(0, buffer - dist_to_top)**2
+        ]))
+        return p * 10.0 # Weight of the boundary penalty
 
-    all_ball_energies = vmap(_calculate_ball_pressure)(defenders)
+    all_ball_energies = vmap(_calculate_ball_pressure)(all_defenders_pos)
     E_collective_ball = softmin(all_ball_energies, k=params['k_softmin'])
     
-    # 4. Calculate Spatial Penalties
-    E_occupancy = _calculate_occupancy_penalty(defenders, params)
-    E_lane_blocking = _calculate_lane_blocking_penalty(defenders, offenders, basket_pos, params)
+    E_occupancy = _calculate_occupancy_penalty(all_defenders_pos, params)
+
+    E_boundary = jnp.sum(vmap(boundary_penalty)(all_defenders_pos))
     
-    # 5. Sum it all up
-    # We divide collective team scalars by 5 so they are evenly distributed
-    # when the gradient `.sum()` is called later.
-    return E_ot_field + E_indiv*0.0 + (E_collective_ball / 5.0) + (E_occupancy / 5.0) + (E_lane_blocking / 5.0)
+    return E_gravity + E_field + E_collective_ball + E_occupancy + E_boundary + E_cohesion
+
+@jit
+def total_energy(defenders, offenders, q_values, ball, basket_pos, params):
+    per_def_energy = vmap(_total_energy_per_defender, in_axes=(0, None, None, None, None, None))(
+        defenders, defenders, offenders, ball, basket_pos, params
+    )
+    # Calculate global IST penalty using the real q_values
+    ist_energy = _calculate_ist_penalty(defenders, offenders, q_values, ball, basket_pos, params)
+
+    return per_def_energy + ist_energy
 
 if __name__ == '__main__':
     key = jax.random.PRNGKey(42)
@@ -260,6 +218,7 @@ if __name__ == '__main__':
     ])
     ball = offenders[0]
 
+    # Defender is slightly behind and to the side of the ideal cushion spot
     defenders = jnp.array([
         [34., 28.], # Defender 0
         [8., 38.],
@@ -268,15 +227,29 @@ if __name__ == '__main__':
         [20., 15.]
     ])
 
-    print("--- JAX Potentials V6: Optimal Transport Assignments ---")
+    print("--- JAX Potentials V5: Anisotropic Elliptical Wells ---")
+
+    # Calculate the ideal spot for defender 0 to guard offender 0
+    target_pos_0, angle_0 = _calculate_offset_attractor(offenders[0], basket_pos, params)
     
-    # Test with skewed weights (Steph Curry effect)
-    mock_weights = jnp.array([1.0, 3.0, 0.5, 0.5, 0.5])
-    energies = total_energy(defenders, offenders, ball, basket_pos, params, mock_weights)
-    grad_fn = jax.grad(lambda d: total_energy(d, offenders, ball, basket_pos, params, mock_weights).sum())
+    print(f"\nOffender 0 Position: {offenders[0]}")
+    print(f"Ideal Cushion Position for D0: {target_pos_0}")
+    print(f"Rotation Angle (degrees): {jnp.rad2deg(angle_0):.1f}")
+    
+    # Calculate energy and gradient
+    energies = total_energy(defenders, offenders, ball, basket_pos, params)
+    grad_fn = jax.grad(lambda d: total_energy(d, offenders, ball, basket_pos, params).sum())
     grads = grad_fn(defenders)
 
-    print(f"\nEnergy per Defender: \n{energies}")
-    print(f"\nGradients (Push forces): \n{grads}")
-    
-    print("\nInitialization Successful. Sinkhorn assignments are active.")
+    print(f"\nDefender 0 Position: {defenders[0]}")
+    print(f"Energy for Defender 0: {energies[0]:.4f}")
+    print(f"Gradient for Defender 0: {grads[0]}")
+
+    # The gradient should point from the defender's current position toward the target position
+    vec_to_target = target_pos_0 - defenders[0]
+    dot_product = jnp.dot(grads[0], vec_to_target)
+
+    print(f"\nVector from D0 to Target: {vec_to_target}")
+    print(f"Dot product of (Gradient) and (Vector to Target): {dot_product:.4f}")
+    assert dot_product < 0 # Negative dot product means gradient points towards the target
+    print("\nAssertion passed: Gradient correctly points defender toward the ideal cushion spot.")

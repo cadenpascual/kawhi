@@ -1,7 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Rectangle, Arc
-
+import matplotlib.colors as mcolors
+from scipy.ndimage import gaussian_filter  # <-- The smoothing tool
 
 def plot_frame(frame, team_colors=None):
     """
@@ -106,6 +107,15 @@ def draw_half_court(ax=None, color="black", lw=2, outer_lines=False, zorder=2):
 
     return ax
 
+# --- 1. DEFINE THE CUSTOM CLIPPERS COLORMAP ---
+C_COLD = '#1D428A'  # Naval Blue
+C_HOT = '#C8102E'   # Ember Red
+C_COURT = '#BEC0C2' # Clippers Silver / Grey for court lines
+
+clippers_cmap = mcolors.LinearSegmentedColormap.from_list("clippers_diverging", [C_COLD, "white", C_HOT])
+clippers_sequential = mcolors.LinearSegmentedColormap.from_list("clippers_sequential", ["white", C_HOT])
+
+# --- 2. THE HIGH-ACCURACY COURT DRAWING FUNCTION ---
 def draw_half_court_ft(ax=None, color="black", lw=2, outer_lines=False, zorder=3,
                        baseline_y=-4.75):
     """
@@ -166,7 +176,6 @@ def draw_half_court_ft(ax=None, color="black", lw=2, outer_lines=False, zorder=3
                 linewidth=lw, color=color)
     three_arc.set_clip_on(False)
 
-
     for p in [hoop, backboard, outer_box, inner_box, top_ft, bottom_ft, restricted, three_arc]:
         p.set_zorder(zorder)
         ax.add_patch(p)
@@ -184,30 +193,112 @@ def draw_half_court_ft(ax=None, color="black", lw=2, outer_lines=False, zorder=3
 
     return ax
 
-def plot_player_map_on_court(m, key="density", title=None, alpha=0.85,
-                            baseline_y=-4.75, xlim=(-23.5, 23.5), ylim=(-5, 42)):
-    """
-    Plot a single player's map dict (from build_player_maps) on court.
-    """
-    grid = m[key].T
-    xedges, yedges = m["xedges"], m["yedges"]
 
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ax.imshow(
-        grid,
+# --- 3. THE PLOTTING FUNCTIONS ---
+
+def plot_player_map_on_court(grid, extent=(-25, 25, -5, 42), title=None, alpha=0.85,
+                             xlim=(-25, 25), ylim=(-5, 42), transpose=True, 
+                             vmin=0.0, vmax=None, midpoint=1.0):
+    """
+    Plots an absolute xPPS map using a DIVERGING colormap.
+    Values below 'midpoint' appear Blue; values above appear Red.
+    """
+    safe_grid = np.nan_to_num(grid, nan=0.0)
+    smoothed_grid = gaussian_filter(safe_grid, sigma=1.2)
+    grid_to_plot = smoothed_grid.T if transpose else smoothed_grid
+
+    # If vmax isn't provided, calculate it from the grid
+    if vmax is None:
+        vmax = np.max(grid_to_plot)
+    
+    # Ensure midpoint is within the range for the Norm to work
+    actual_vmax = max(vmax, midpoint + 0.01)
+    
+    # TwoSlopeNorm allows us to fix the 'White' color exactly at the midpoint (1.0)
+    # even if the range (0.0 to 1.5) is not centered.
+    norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=midpoint, vmax=actual_vmax)
+
+    fig, ax = plt.subplots(figsize=(7, 6), dpi=300)
+    
+    # Plot heatmap with Diverging Colormap
+    im = ax.imshow(
+        grid_to_plot,
         origin="lower",
-        extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
+        extent=extent,
         aspect="equal",
         alpha=alpha,
-        zorder=1
+        zorder=1,
+        cmap=clippers_cmap,
+        norm=norm
     )
 
-    draw_half_court_ft(ax=ax, lw=2, zorder=3, baseline_y=baseline_y)
+    # Draw high-accuracy court lines (using dark grey for neutral contrast)
+    draw_half_court_ft(ax=ax, color='#333333', lw=2, outer_lines=True, zorder=3)
 
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
     ax.set_xticks([])
     ax.set_yticks([])
-    if title:
-        ax.set_title(title)
+    ax.set_aspect('equal')
+    
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+        
+    if title: 
+        ax.set_title(title, fontsize=16, fontweight='black', pad=15)
+
+    # Add Colorbar to show the scale
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Shot Quality (xPPS)", fontweight='bold', labelpad=10)
+        
+    plt.show()
+
+def plot_relative_xpps_map(player_grid, league_grid, extent=(-25, 25, -5, 42), 
+                           xlim=(-25, 25), ylim=(-5, 42),
+                           title=None, alpha=0.85, transpose=True, max_abs_val=None):
+    """
+    Plots a relative difference map (Player vs League) ON the court.
+    """
+    relative_grid = player_grid - league_grid
+    grid_to_plot = relative_grid.T if transpose else relative_grid
+
+    if max_abs_val is None:
+        max_abs_val = np.max(np.abs(grid_to_plot))
+
+    fig, ax = plt.subplots(figsize=(7, 6), dpi=150)
+    
+    # Plot the relative heatmap
+    im = ax.imshow(
+        grid_to_plot,
+        origin="lower",
+        extent=extent,
+        aspect="equal",
+        alpha=alpha,
+        zorder=1,
+        cmap=clippers_cmap, 
+        vmin=-max_abs_val,  
+        vmax=max_abs_val    
+    )
+
+    # Draw the court lines using a dark grey/charcoal to contrast with red/blue
+    draw_half_court_ft(ax=ax, color='#333333', lw=2, outer_lines=True, zorder=3)
+
+    # Lock to exact specified grid
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    if title: 
+        ax.set_title(title, fontsize=16, fontweight='black', pad=15)
+        
+    # Styled colorbar
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.outline.set_edgecolor('#333333')
+    cbar.outline.set_linewidth(1.5)
+    cbar.set_label("xPPS vs League Average", rotation=270, labelpad=15, fontweight='bold')
+        
     plt.show()

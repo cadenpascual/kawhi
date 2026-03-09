@@ -2,16 +2,13 @@ import jax
 import jax.numpy as jnp
 import optuna
 import json
-import math
 from functools import partial
 from jax import jit, vmap, vmap
-
 
 # Import from our existing modules
 from .potentials import params as default_params
 from .solver import run_simulation
-from .utils import extract_quality_trajectories, prepare_play_data
-from src.data_io.maps import load_maps_npz
+from .utils import prepare_play_data
 
 # --- Data Loading ---
 
@@ -47,10 +44,6 @@ def load_data_slice(file_path, num_frames=50):
             off_team_id = p['teamid']
             
     def_team_id = team_ids[0] if team_ids[1] == off_team_id else team_ids[1]
-    
-    # --- Extract Player IDs ---
-    # Sort them by playerid to guarantee alignment with coordinate extraction
-    off_pids = sorted([p['playerid'] for p in first_frame['players'] if p['teamid'] == off_team_id])
 
     # Extract trajectories
     ball_traj = []
@@ -82,137 +75,124 @@ def load_data_slice(file_path, num_frames=50):
     return (
         jnp.array(init_defenders),
         jnp.array(ball_traj),
-        jnp.array(offenders_traj),
-        off_pids
+        jnp.array(offenders_traj)
     )
 
 # --- Loss Metrics ---
-@jit
-def calculate_losses(def_traj, off_traj, offender_weights_traj, basket_pos):
-    """
-    Calculates pressure based on Optimal Transport / IST weights.
-    High threat players must be guarded closely to lower the loss.
-    """
-    def pressure_at_t(def_pos, off_pos, weights):
-        # 1. Distance matrix (5 offenders x 5 defenders)
-        diffs = off_pos[:, jnp.newaxis, :] - def_pos[jnp.newaxis, :, :]
-        dists = jnp.linalg.norm(diffs, axis=2)
-        
-        # 2. Find the closest defender for each offender
-        min_dists = jnp.min(dists, axis=1)
-        
-        # 3. WEIGHT the loss by IST (offender_weights_traj)
-        # If a 90% threat shooter is open, the loss is huge.
-        # If a 5% threat non-shooter is open, the loss is small.
-        weighted_pressure = min_dists * weights
-        
-        return jnp.mean(weighted_pressure)
 
-    # Vmap over the timeline
-    pressure_loss = jnp.mean(vmap(pressure_at_t)(def_traj, off_traj, offender_weights_traj))
+@jit
+def calculate_losses(def_traj, off_traj, ball_traj, basket_pos, q_traj, params):
+    """
+    Calculates the true IST of the simulated defense to use as the loss metric!
+    We want Optuna to find the weights that MINIMIZE the total IST.
+    """
+    def ist_at_t(off_pos, def_pos, ball_pos, q_vals):
+        # 1. B-Traj (Distance to ball) 
+        ball_dist = jnp.linalg.norm(off_pos - ball_pos, axis=1)
+        b_val = 0.4 + 0.6 * (1.0 / (1.0 + jnp.exp(0.3 * (ball_dist - 18.0))))
+        
+        # 2. Sim Weights 
+        sim_weight = jnp.maximum((q_vals ** params['ist_q_exp']) * b_val, 0.35)
+        
+        # 3. Openness (O) using hard minimum for true evaluation
+        dists_to_defs = jnp.linalg.norm(def_pos - off_pos[:, None, :], axis=2)
+        closest_dist = jnp.min(dists_to_defs, axis=1)
+        openness = jnp.clip(closest_dist / 6.0, 0.5, 1.5)
+        
+        return jnp.sum(sim_weight * (openness ** params['ist_o_exp']))
+
+    # Vmap across time and mean it
+    mean_ist_loss = jnp.mean(vmap(ist_at_t)(off_traj, def_traj, ball_traj, q_traj))
     
-    # Smoothness loss keeps movements realistic
+    # Keep smoothness so it doesn't just vibrate wildly to get low IST
     smoothness_loss = jnp.mean(jnp.linalg.norm(jnp.diff(def_traj, axis=0), axis=2))
     
-    return pressure_loss, smoothness_loss
+    return mean_ist_loss, smoothness_loss
 
 # --- Optuna Objective Function ---
 
-def objective(trial, batch_data):
-    """Minimizes average pressure and smoothness loss across the batch."""
-    params = default_params.copy()
+def objective(trial, data):
+    """The Optuna objective function to be minimized."""
 
+    # 1. HARDCODE your best parameters
+    params = {
+        'blending_radius': jnp.array(15.0),
+        'blending_k': jnp.array(0.5),
+        'attraction_weight': 7.570765933969438,
+        'basket_gravity_weight': 1.5510598901937178,
+        'basket_gravity_sigma': jnp.array(12.0),
+        'field_weight': -16.627957913865643,
+        'global_ball_weight': 0.10151136411006659,
+        'offender_threat_scale': jnp.array(2.0),
+        'offender_threat_dist': jnp.array(15.0),
+        'k_softmin': 7.211277690769142,
+        'occupancy_weight': 4.060469919776791,
+        'cohesion_weight': 1.192885663129121,
+        'formation_radius': 19.943871757515588,
+        'sigma_long': 4.2939688756721175,
+        'sigma_wide': 2.7709911763599617,
+        'cushion_dist': 2.1430822408443366,
+        'learning_rate': 0.1,
+        'sprint_penalty_weight': 85.28395263390695,
+        'jko_lambda': 0.5,
+        'sinkhorn_epsilon': 0.01,
+        'velocity_cap': 0.8,
+        'soft_velocity_cap': 0.6,
+        'court_dims': [[0.0, 94.0], [0.0, 50.0]],
+        'max_gradient_norm': 1.0,
+        'acceleration_penalty_weight': 2.0,
+        'velocity_penalty_weight': 1.0,
+    }
+
+    # 2. SUGGEST the IST variables
     params.update({
-    # --- HARD PHYSICS LIMITS (The new anti-slingshot variables) ---
-    'max_acceleration': trial.suggest_float("max_acceleration", 30.0, 80.0), # Limits instant direction changes
-    'velocity_cap': trial.suggest_float("velocity_cap", 15.0, 22.0),         # Human top speed
-    
-    # --- SOLVER TUNING ---
-    'learning_rate': trial.suggest_float("learning_rate", 0.5, 3.0),       # Smaller steps so SGD doesn't jump over the target
-    'jko_num_steps': trial.suggest_int("jko_num_steps", 20, 50),             # More steps to reach the target smoothly
-    
-    # --- TACTICS & ASSIGNMENTS ---
-    'cushion_dist': trial.suggest_float("cushion_dist", 1.5, 3.5),           # How tight the defense plays
-    'attraction_weight': trial.suggest_float("attraction_weight", 8.0, 20.0),# How aggressive they close out
-    'field_weight': trial.suggest_float("field_weight", -50.0, -20.0),
-    'basket_gravity_weight': trial.suggest_float("basket_gravity_weight", 5.0, 20.0),
-    'global_ball_weight': trial.suggest_float("global_ball_weight", 0.01, 0.15),
-    
-    # --- SPREAD & SPACING ---
-    'sigma_long': trial.suggest_float("sigma_long", 4.0, 10.0),
-    'sigma_wide': trial.suggest_float("sigma_wide", 2.0, 6.0),
-    'lane_blocking_weight': trial.suggest_float("lane_blocking_weight", 20.0, 45.0),
-    'occupancy_weight': trial.suggest_float("occupancy_weight", 20.0, 45.0),
-    'cohesion_weight': trial.suggest_float("cohesion_weight", 0.1, 1.5),
-    'formation_radius': trial.suggest_float("formation_radius", 12.0, 20.0),
-    
-    'court_dims': [[0., 94.], [0., 50.]],
-    'acceleration_penalty_weight': 0.0,
-    'jko_lambda': 0.5,             
-    'sinkhorn_epsilon': 0.05,       
-    'max_gradient_norm': 100, 
-    'sprint_penalty_weight': 2.0, # (Adding this too just in case it was missing)
-})
+        'ist_q_exp': trial.suggest_float("ist_q_exp", 2.0, 4.0), 
+        'ist_o_exp': trial.suggest_float("ist_o_exp", 1.0, 3.0), 
+        'ist_weight': trial.suggest_float("ist_weight", 10, 40.0), 
+        'ist_k_smooth': trial.suggest_float("ist_k_smooth", 5, 25.0),
+    })
 
     
-    total_pressure_loss = 0.0
+    total_ist_loss = 0.0
     total_smoothness_loss = 0.0
     valid_plays = 0
+
+    basket_pos = jnp.array([5.25, 25.0]) # Standard basket position
+    jko_steps = 20
+
+    for _, row in data.iterrows(): # Assuming batch_data is a DataFrame
+        play_data, q_traj = prepare_play_data(row)
+        init_defenders, ball_traj, offenders_traj, real_def_traj, basket_pos = play_data
+
+        simulated_def_traj = run_simulation(
+            init_defenders,
+            ball_traj,
+            offenders_traj,
+            q_traj,
+            basket_pos,
+            params,
+            jko_num_steps=jko_steps
+        )
     
-    for _, row in batch_data.iterrows(): # Assuming batch_data is a DataFrame
-        play_data, offender_weights_traj = prepare_play_data(row)
-        init_defenders, ball_traj, off_traj, real_def_traj, basket_pos = play_data
+        # 3. Calculate True IST Loss
+        ist_loss, smoothness_loss = calculate_losses(
+            simulated_def_traj, offenders_traj, ball_traj, basket_pos, q_traj, params
+        )
 
-        # SANITY CHECK: If any input data is NaN, skip this play
-        if jnp.any(jnp.isnan(init_defenders)) or jnp.any(jnp.isnan(off_traj)):
-            print(f"Skipping Play: Input data contains NaNs! Row index: {row.name}")
-            continue
-
-        if jnp.any(jnp.isnan(offender_weights_traj)):
-            # This happens if q_traj extraction failed for a specific coordinate
-            offender_weights_traj = jnp.nan_to_num(offender_weights_traj, nan=0.1)
-        
-        # Skip plays that are too short after slicing (e.g., less than 5 frames)
-        if len(ball_traj) < 5:
-            # Add a print statement here to see if plays are too short
-            # print(f"Play skipped! Length: {len(ball_traj)}") 
-            continue
-            
-        try:
-            simulated_def_traj = run_simulation(
-                init_defenders, ball_traj, off_traj, offender_weights_traj, 
-                basket_pos, params, jko_num_steps=20
-            )
-            
-            # DIAGNOSTIC: Check if the trajectory itself is the problem
-            if jnp.any(jnp.isnan(simulated_def_traj)):
-                print(f"Pruned: Trajectory exploded (NaNs found). Field Weight: {params['field_weight']:.2f}, LR: {params.get('learning_rate', 'N/A')}")
-                raise optuna.exceptions.TrialPruned()
-
-            pressure_loss, smoothness_loss = calculate_losses(
-                simulated_def_traj, off_traj, offender_weights_traj, basket_pos 
-            )
-            
-            # ... rest of your code ...
-            
-            if jnp.isnan(pressure_loss) or jnp.isnan(smoothness_loss):
-                print("Pruned: Losses were NaN")
-                raise optuna.exceptions.TrialPruned()
-                
-            total_pressure_loss += pressure_loss
-            total_smoothness_loss += smoothness_loss
-            valid_plays += 1
-            
-        except Exception as e:
-            # THIS IS THE CRITICAL CHANGE: Print the actual error!
-            if not isinstance(e, optuna.exceptions.TrialPruned):
-                print(f"Pruned due to Crash: {e}")
+        # --- THE FIX: Catch NaNs immediately per-play ---
+        if jnp.isnan(ist_loss) or jnp.isnan(smoothness_loss):
             raise optuna.exceptions.TrialPruned()
-            
-    if valid_plays == 0:
-        print("Pruned: valid_plays was 0 (All plays were skipped or failed)")
+
+        total_ist_loss += ist_loss
+        total_smoothness_loss += smoothness_loss
+        valid_plays += 1
+    
+    # Prune trial if the simulation results in NaN values (numerical instability)
+    if jnp.isnan(ist_loss) or jnp.isnan(smoothness_loss):
         raise optuna.exceptions.TrialPruned()
-    return (total_pressure_loss / valid_plays), (total_smoothness_loss / valid_plays)
+    
+    return (total_ist_loss / valid_plays), (total_smoothness_loss / valid_plays)
+
 
 # --- Main Execution ---
 
@@ -225,34 +205,12 @@ if __name__ == "__main__":
     # Load data once outside the objective function for efficiency
     try:
         data_slice = load_data_slice(DATA_FILE, num_frames=50)
-        init_defenders, ball_traj, off_traj, off_pids = data_slice
     except (FileNotFoundError, ValueError) as e:
         print(f"Error loading data: {e}")
         print("Please ensure 'datasets/0021500622_labeled.json' is available.")
         exit(1)
         
-
-    print("Data loaded. Computing threat weights...")
-        # --- Calculate Offender Weights --- 
-    maps, meta = load_maps_npz("datasets/maps_1ft_xpps.npz")
-    pid2row = {int(p): i for i, p in enumerate(maps["player_ids"])}
-
-    # Extract Quality (Q)
-    q_traj = extract_quality_trajectories(off_traj, off_pids, maps, pid2row)
-
-    # Extract Ball Factor (B)
-    ball_expanded = ball_traj[:, None, :] 
-    dist_to_ball = jnp.linalg.norm(off_traj - ball_expanded, axis=2)
-    k = 0.3
-    d0 = 18.0
-    b_floor = 0.4
-    raw_logistic = 1.0 / (1.0 + jnp.exp(k * (dist_to_ball - d0)))
-    b_traj = b_floor + (1.0 - b_floor) * raw_logistic
-
-    # Final Pre-Computed Weights
-    offender_weights_traj = q_traj * b_traj
-
-    print("Weights computed. Starting optimization...")
+    print("Data loaded. Starting optimization...")
 
     # 1. Create or load the Optuna study
     study = optuna.create_study(
@@ -265,6 +223,7 @@ if __name__ == "__main__":
     # 2. Run the optimization
     # Pass data using a lambda to avoid reloading it in every trial
     study.optimize(lambda trial: objective(trial, data_slice), n_trials=100)
+
     # 3. Print results
     print("\nOptimization Finished!")
     print(f"Number of finished trials: {len(study.trials)}")
@@ -283,4 +242,3 @@ if __name__ == "__main__":
     except ImportError:
         print("\nInstall plotly and kaleido to visualize the Pareto front:")
         print("pip install plotly kaleido")
-
