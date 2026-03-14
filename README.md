@@ -16,12 +16,19 @@ To ensure reproducibility, please follow these steps to set up the Python enviro
    cd kawhi
    ```
 
-2. **Create a virtual environment (Recommended: Conda or standard venv):**
+2. **Create a virtual environment (Recommended: Conda):**
    ```bash
-   # Using standard Python venv
-   python -m venv kawhi_env
-   source kawhi_env/bin/activate  # On Windows use: kawhi_env\Scripts\activate
+   # Using Conda (Preferred for Data Science packages like JAX & SciPy)
+   conda create -n kawhi_env python=3.10 -y
+   conda activate kawhi_env
    ```
+
+   *Alternative using standard Python venv:*
+
+      ```bash
+      python -m venv kawhi_env
+      source kawhi_env/bin/activate  # On Windows use: kawhi_env\Scripts\activate
+      ```
 
 3. **Install the required dependencies:**
    ```bash
