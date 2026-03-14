@@ -1,0 +1,20 @@
+# Core Data Science & Math
+pandas>=2.1.0
+numpy>=1.26.0
+scipy>=1.11.0
+
+# Wasserstein Gradient Flow & Optimization
+jax>=0.4.20
+jaxlib>=0.4.20
+optax>=0.1.7
+
+# Visualizations
+matplotlib>=3.8.0
+
+# Data I/O & Parsing
+orjson>=3.9.0
+pyarrow>=14.0.0   # Required for Pandas to read/write .parquet files
+
+# APIs & Notebooks
+nba_api>=1.4.1
+jupyter>=1.0.0

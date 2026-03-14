@@ -1,131 +1,131 @@
 # K.A.W.H.I. - Kinetic Adaptation via Wasserstein Heuristics and Identity
-## Modeling NBA Team Dynamics via Wasserstein Gradient Flows
 
-This document provides a comprehensive overview of the `nba-defensive-dna` repository. This project focuses on **Modeling NBA Team Dynamics via Wasserstein Gradient Flows**, utilizing player tracking data, play-by-play data, and advanced spatial-temporal modeling to simulate and evaluate defensive positioning.
+**Modeling NBA Team Dynamics via Wasserstein Gradient Flows**
 
+This document provides a comprehensive overview of the `kawhi` repository. This project focuses on modeling NBA team dynamics via Wasserstein Gradient Flows, utilizing player tracking data, play-by-play data, and advanced spatial-temporal modeling to simulate and evaluate defensive positioning.
 
-## Dataset Details
-For this project we combined publicly available NBA datasets with original data processing,
-alignment, and clustering methods.
+---
 
-### Data 
+## 🛠️ Environment Setup Instructions
 
+To ensure reproducibility, please follow these steps to set up the Python environment required to run this codebase. 
+
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/](https://github.com/)[your-username]/kawhi.git
+   cd kawhi
+   ```
+
+2. **Create a virtual environment (Recommended: Conda or standard venv):**
+   ```bash
+   # Using standard Python venv
+   python -m venv kawhi_env
+   source kawhi_env/bin/activate  # On Windows use: kawhi_env\Scripts\activate
+   ```
+
+3. **Install the required dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+---
+
+## 🚀 Exact Commands to Run Experiments
+
+The K.A.W.H.I. pipeline is broken down into specific modules. To reproduce our defensive feature extraction and Wasserstein Gradient Flow optimizations, run the following commands in order from the root directory:
+
+**1. Data Parsing & Ingestion**
+Extracts the raw 7z Second Spectrum tracking files and converts them into structured JSON events.
+```bash
+python src/scripts/7z_to_json.py
+```
+
+**2. Feature Engineering**
+Generates the defensive spatial statistics and Initial Spatial-Temporal (IST) states.
+```bash
+python src/pipelines/defense_parquet.py
+```
+
+**3. Wasserstein Optimization Simulations**
+Runs the core math/physics engine to simulate optimal defensive movements.
+```bash
+python src/gradient_flows/optimize.py
+```
+
+**4. Generate Final Visualizations**
+To view the final spatial expected value maps, defensive pressure heatmaps, and results, execute the final visualization notebook:
+```bash
+jupyter nbconvert --to notebook --execute notebooks/12_report_visualizations.ipynb
+```
+
+---
+
+## 🧠 Methodology & Notes
+
+### Defensive xFG & IST
+We model defense not as a direct predictor of missed shots, but as a contextual modifier of expected shot quality. The learned defense feature represents the **marginal risk induced by giving a shooter additional space**, enabling defender-specific guarding decisions rather than raw outcome prediction.
+
+*Note on Pre-Shot Application:* Our xFG (Expected Field Goal) and xPPS (Expected Points Per Shot) models were trained at shot time, but we utilize them pre-shot. This is valid because we interpret our Initial Spatial-Temporal (IST) metric as a latent, continuous threat, rather than a literal immediate probability of a shot.
+
+### Current Limitations (Deficiencies)
+Because our current "impact" metric is shot-based, it currently does not capture:
+* **Playmaking Gravity:** Passing and advantage creation.
+* **Screening:** Off-ball screening value and off-ball gravity.
+* **Foul-drawn Rim Pressure:** Missed shots that result in fouls are traditionally omitted from NBA shot charts, masking true rim-pressure value.
+
+### Core Variables Used
+The modeling utilizes the following extracted features:
+`GAME_ID`, `SHOT_EVENT_ID`, `tracking_event_id`, `release_frame_idx`, `event_list_idx`, `PERIOD`, `game_clock`, `PLAYER_ID`, `TEAM_ID`, `x_ft`, `y_ft`, `xFG_offense`, `xPPS_offense`, `SHOT_MADE_FLAG`, `close_def_dist_release`, `closest_def_dist`, `close_def_id`, `num_defenders_tracked`, `w0_close_def_dist_mean`, `w0_close_def_dist_min`, `w0_shooter_speed_mean`, `w0_shooter_speed_max`, `w0_def_speed_mean`, `w0_closing_speed_mean`, `w1_close_def_dist_mean`, `w1_close_def_dist_min`, `w1_shooter_speed_mean`, `w1_shooter_speed_max`, `w1_def_speed_mean`, `w1_closing_speed_mean`, `shooter_speed`, `game_clock_tracking`, `shot_clock_tracking`, `w0_shooter_accel_mean`, `w1_shooter_accel_mean`, `Real_IST`, `Real_Q`, `Real_O`, `Real_S`, `Empirical_IST`
+
+---
 
 ## 📊 Data Sources & References
 
 ### Primary Data Sources
-These data sources were directly used or processed in this project.
-
-- **NBA SportVU Tracking Data (2015–16)**  
-  https://github.com/sealneaward/nba-movement-data  
-  Raw player and ball tracking data used to construct per-play tracking events.
-
-- **NBA Shot Chart Data / Stats API**  
-  https://github.com/swar/nba_api  
-  Used for shot context, shot locations, and auxiliary features.
+We combined publicly available NBA datasets with original data processing, alignment, and clustering methods.
+- **NBA SportVU Tracking Data (2015–16)**: [sealneaward/nba-movement-data](https://github.com/sealneaward/nba-movement-data) - Raw player/ball tracking data used to construct per-play tracking events.
+- **NBA Shot Chart Data / Stats API**: [swar/nba_api](https://github.com/swar/nba_api) - Used for shot context, shot locations, and auxiliary features.
 
 ### Related Research & Inspiration
-
-- **Collective Motion and Team Structure in Professional Basketball**  
-  *Scientific Reports* (2025).  
-  https://www.nature.com/articles/s41598-025-04953-x  
-
-  This work inspired our treatment of basketball teams as coordinated dynamical systems
-  and informed our use of spatial structure and collective motion metrics. No data or code
-  from this paper was used directly.
-
+- **Collective Motion and Team Structure in Professional Basketball** (*Scientific Reports*, 2025): [Article Link](https://www.nature.com/articles/s41598-025-04953-x). This work inspired our treatment of basketball teams as coordinated dynamical systems. *(No data or code from this paper was used directly).*
 
 ### Conceptual References & Benchmarks
+- **Expected Field Goal Percentage (xFG%)**: [NBA Intro to xFG%](https://www.nba.com/news/intro-to-expected-field-goal-percentage). Consulted as a conceptual benchmark. We do not replicate the NBA’s exact xFG% methodology; instead, we developed an independent expected-value framework based on tracking-derived defensive features.
 
-- **Expected Field Goal Percentage (xFG%)**  
-  https://www.nba.com/news/intro-to-expected-field-goal-percentage  
-
-  This article was consulted as a conceptual benchmark for shot-quality metrics used in
-  basketball analytics. While our project also models expected shooting outcomes, we do
-  not replicate the NBA’s xFG% formulation, inputs, or methodology. Instead, we develop
-  an independent expected-value framework based on tracking-derived defensive features.
-
-
+---
 
 ## 📁 Directory Structure
 
 ### `data/`
-This directory holds all the data required and generated by the project. *(Note: Large files are typically ignored by git).*
-* **`raw/`**: Contains the raw, unmodified datasets.
-    * Play-by-play logs (`2015-16_pbp.csv`).
-    * NBA tracking data in archives and JSON formats (`7z_test/`, `json/`).
-    * Basic defensive player/team stats (`defense/`).
-* **`processed/`**: Contains the cleaned, transformed, and feature-engineered data.
-    * `def_features/` & `def_features_updated/`: Parquet files containing defensive metrics extracted per game.
-    * `ist/`: Contains aggregated tables for Initial Spatial-Temporal (IST) tracking.
-    * `optimization/`: SQLite databases (`.db`) storing the results of gradient flow optimizations (e.g., speed, balance, control constraints).
-    * `shot_maps/`: Pickled NumPy arrays (`.npz`) mapped for expected field goal metrics.
-    * `shots/`: Aggregated shot log data.
-    * `traj_features/`: Parquet files containing player trajectory features per game.
+Holds all data required and generated by the project. *(Note: Large files are ignored by git).*
+* `raw/`: Unmodified datasets (Play-by-play logs, `.7z` tracking data, basic defense stats).
+* `processed/`: Cleaned, transformed, and feature-engineered data (Parquet features, aggregated `.csv` IST tables, `.npz` shot maps, and SQLite `.db` optimization results).
 
 ### `notebooks/`
-Jupyter notebooks detailing the step-by-step data science pipeline, from exploration to final reporting.
-* `01_data_exploration.ipynb` - Initial EDA on raw tracking and play-by-play data.
-* `02_label_events.ipynb` - Labeling specific basketball events (shots, passes, drives).
-* `03_calculate_xfg.ipynb` - Calculating Expected Field Goal (xFG) probabilities.
+Jupyter notebooks detailing the data science pipeline:
+* `01_data_exploration.ipynb` - Initial EDA.
+* `02_label_events.ipynb` - Labeling specific basketball events.
+* `03_calculate_xfg.ipynb` - Calculating xFG probabilities.
 * `04_defensive_features.ipynb` - Extracting spatial features for defenders.
 * `05_bigdata_pipeline.ipynb` - Scaling the data processing pipeline.
-* `06_calculate_ist_variables.ipynb` & `07_calculate_ist_all.ipynb` - Computing IST distributions.
-* `08_optimize_variables.ipynb` - Preparing boundary variables for spatial optimization.
-* `09_run_simulated_defense.ipynb` - Running the core Wasserstein Gradient Flow simulations.
-* `10_find_agg_statistics.ipynb` & `11_agg_data_analysis.ipynb` - Post-simulation analysis and aggregations.
-* `12_report_visualizations.ipynb` - Generating final plots and figures for the research report.
+* `06` & `07_calculate_ist...` - Computing IST distributions.
+* `08_optimize_variables.ipynb` - Preparing boundary variables.
+* `09_run_simulated_defense.ipynb` - Core Wasserstein Gradient Flow simulations.
+* `10` & `11_agg_data...` - Post-simulation aggregations.
+* `12_report_visualizations.ipynb` - Final plots and figures.
 
----
+### `src/` (Codebase Architecture)
+Core Python source code modules organized by domain:
+* `data_io/`: I/O handlers for parsing `.7z` archives and standardizing save/load formats.
+* `data_sources/`: Scripts for pulling official `nba_api` data.
+* `features/`: Deriving defensive spatial stats and Initial Spatial-Temporal (IST) states.
+* `gradient_flows/`: The core math/physics engine using Wasserstein Gradient Flows.
+* `metrics/`: Evaluation scripts to grade defensive success.
+* `pipelines/` & `scripts/`: Executable files for end-to-end batch processing.
+* `processing/`: Complex logic merging tracking frames with Play-by-Play (PBP) logs.
+* `spatial/`: Matrices and dimension mapping for the court layout.
+* `tracking/`: Data structures for ball/player movement and event detection.
+* `viz/`: Generation of court visualizations and gradient flow animations.
 
-### Codebase Architecture (`src/`)
-
-The core Python source code modules powering the data pipeline and the gradient flow modeling are organized by domain responsibility:
-
-* **`data_io/`**: Handlers for parsing zipped `.7z` tracking data archives and standardizing data saving/loading (Pickle, Parquet, CSV).
-* **`data_sources/`**: Scripts for pulling live or historical shot data from the official `nba_api`.
-* **`features/`**: Modules to derive defensive spatial statistics (distance to shooter, defensive density, etc.) and Initial Spatial-Temporal (IST) states.
-* **`gradient_flows/`**: The core math/physics engine using Wasserstein Gradient Flows to simulate optimal defensive movements based on attractive/repulsive potentials.
-* **`metrics/`**: Evaluation and classification scripts to grade defensive success and spatial positioning.
-* **`pipelines/` & `scripts/`**: Executable files to run end-to-end batch processing, ETL tasks, and grid building.
-* **`processing/`**: Data cleaning and alignment. Contains the complex logic to merge Second Spectrum/SportVU tracking frames with Play-by-Play (PBP) logs.
-* **`spatial/`**: Matrices and dimension mapping for the court layout (Grids, Maps).
-* **`tracking/`**: Data structures for tracking ball/player movement, possession modeling, and release event detection.
-* **`viz/`**: Generation of court visualizations, heatmaps (xFG%, defensive pressure), and animations of the gradient flow simulations.
-
----
 ### `images/` & `docs/`
-Contains the generated charts (e.g., `harden_density.png`, `stephvsleagueaverage.png`, expected FG heatmaps) and markdown files to render GitHub Pages or project reports.
-
-
-## Notes
-Defensive_XFG: We model defense not as a predictor of makes, but as a contextual modifier of expected shot quality. The learned defense feature represents the marginal risk induced by giving a shooter additional space, enabling defender-specific guarding decisions rather than outcome prediction.
-
-
-Deficiencies
-
-Your current “impact” is shot-based, so it won’t capture:
-- playmaking gravity (passing, advantage creation)
-- off-ball screening value
-- rim pressure that creates fouls (missed fouled shots aren’t in shot charts)
-
-
-Your xFG / xPPS models were trained at shot time, but you’re now using them pre-shot. That’s fine as long as you interpret IST as a latent threat, not a literal probability of a shot.
-In other words:
-
-
-Variables used: 
-Index(['GAME_ID', 'SHOT_EVENT_ID', 'tracking_event_id', 'release_frame_idx',
-       'event_list_idx', 'PERIOD', 'game_clock', 'PLAYER_ID', 'TEAM_ID',
-       'x_ft', 'y_ft', 'xFG_offense', 'xPPS_offense', 'SHOT_MADE_FLAG',
-       'close_def_dist_release', 'closest_def_dist', 'close_def_id',
-       'num_defenders_tracked', 'w0_close_def_dist_mean',
-       'w0_close_def_dist_min', 'w0_shooter_speed_mean',
-       'w0_shooter_speed_max', 'w0_def_speed_mean', 'w0_closing_speed_mean',
-       'w1_close_def_dist_mean', 'w1_close_def_dist_min',
-       'w1_shooter_speed_mean', 'w1_shooter_speed_max', 'w1_def_speed_mean',
-       'w1_closing_speed_mean', 'shooter_speed', 'game_clock_tracking',
-       'shot_clock_tracking', 'w0_shooter_accel_mean', 'w1_shooter_accel_mean',
-       'Real_IST', 'Real_Q', 'Real_O', 'Real_S', 'Empirical_IST'],
-      dtype='object')
-
+Contains the generated charts (e.g., `harden_density.png`, expected FG heatmaps) and markdown files to render project reports.

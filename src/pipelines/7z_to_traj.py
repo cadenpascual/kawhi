@@ -10,7 +10,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 # --- IMPORT YOUR MODULES ---
 from src.data_io.maps import load_maps_npz
 from src.processing.indexing import build_tracking_time_index
-from src.features.defense.computing_features_updated import build_defensive_configurations
+from src.features.traj.compute import build_defensive_configurations
 from src.processing.sportvu_to_events import parse_sportvu_kinematics
 
 # --- CONFIGURATION ---
