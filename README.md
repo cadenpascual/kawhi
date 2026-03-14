@@ -6,13 +6,22 @@ This document provides a comprehensive overview of the `kawhi` repository. This 
 
 ---
 
+## 🔗 Project Deliverables
+* **🌐 [Interactive Website](https://takafumim.github.io/Wasserstein-Gradient-Flows/)** – Explore our interactive models and spatial-temporal visualizations.
+* **📄 [Final Technical Report](https://github.com/cadenpascual/kawhi-artifact-directory/blob/main/report.pdf)** – Detailed methodology, mathematical framework, and results analysis.
+* **🖼️ [Research Poster](./docs/DSC180_Poster.pdf)** – A visual summary of our project's findings and Wasserstein Gradient Flow application.
+* **📦 [Artifact Repository](https://github.com/cadenpascual/kawhi-artifact-directory)** – The centralized directory for all data artifacts and supplemental materials.
+
+
+---
+
 ## 🛠️ Environment Setup Instructions
 
 To ensure reproducibility, please follow these steps to set up the Python environment required to run this codebase. 
 
 1. **Clone the repository:**
    ```bash
-   git clone [https://github.com/](https://github.com/)[your-username]/kawhi.git
+   git clone https://github.com/cadenpascual/kawhi.git
    cd kawhi
    ```
 
