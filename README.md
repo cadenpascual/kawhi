@@ -1,4 +1,5 @@
-# Modeling NBA Team Dynamics via Wasserstein Gradient Flows
+# K.A.W.H.I. - Kinetic Adaptation via Wasserstein Heuristics and Identity
+## Modeling NBA Team Dynamics via Wasserstein Gradient Flows
 
 This document provides a comprehensive overview of the `nba-defensive-dna` repository. This project focuses on **Modeling NBA Team Dynamics via Wasserstein Gradient Flows**, utilizing player tracking data, play-by-play data, and advanced spatial-temporal modeling to simulate and evaluate defensive positioning.
 
