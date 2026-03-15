@@ -215,11 +215,14 @@ if __name__ == "__main__":
     
     print(f"    Test IST Loss:  {test_ist_loss:.3f}")
     print(f"    Test Smoothness: {test_smoothness_loss:.3f}")
+    if args.demo:
+        print(f"STEP 3 COMPLETE: Choose your trial in QUICKSTART_DEMO.ipynb")
 
-    print("\n[*] Opening Pareto Front Visualization...")
+
+    '''print("\n[*] Opening Pareto Front Visualization...")
     try:
         import optuna.visualization as vis
         fig = vis.plot_pareto_front(study, target_names=["IST Threat (Lower is safer)", "Jerkiness (Lower is smoother)"])
         fig.show()
     except ImportError:
-        pass
+        pass'''

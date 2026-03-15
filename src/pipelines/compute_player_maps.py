@@ -151,3 +151,4 @@ if __name__ == "__main__":
         output_parquet="data/demo/processed/all_season_shots.parquet",
         output_map_npz="data/demo/processed/maps_1ft_xpps.npz"
     )
+    print(f"PART 1 COMPLETE: Check QUICKSTART_DEMO.ipynb to verify player Quality Maps")

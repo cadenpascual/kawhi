@@ -236,3 +236,4 @@ if __name__ == "__main__":
     print("="*50)
     print(f"Total Valid Plays Saved: {len(final_df)}")
     print(f"File Saved To:           {OUTPUT_FILE}")
+    print(f"STEP 4 COMPLETE: Check QUICKSTART_DEMO.ipynb to view results")

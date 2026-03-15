@@ -181,3 +181,5 @@ def run_season_pipeline():
 
 if __name__ == "__main__":
     run_season_pipeline()
+    if IS_DEMO:
+        print(f"STEP 2 COMPLETE: Check QUICKSTART_DEMO.ipynb to verify trajectories")
