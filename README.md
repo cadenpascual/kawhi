@@ -45,18 +45,7 @@ To ensure reproducibility, please follow these steps to set up the Python enviro
    ```
 
 ---
-
-## 🚀 Exact Commands to Run Experiments
-
 ## 🚀 How to Run the Project Pipeline
-
-### 0. Environment Setup
-Before running the pipeline, ensure your environment has all the required physics, machine learning, and optimal transport libraries installed:
-```bash
-pip install -r requirements.txt
-```
-
----
 
 ### 🧪 The 3-Minute Capstone Demo (Recommended for Reviewers)
 To evaluate the Wasserstein physics engine and feature pipeline without processing 5 hours of 82-game tracking data, use the `--demo` flags. This routes the pipeline to a lightweight 1-game subset (`01.18.2016 GSW at CLE`).
@@ -74,7 +63,7 @@ python -m src.pipelines.compute_traj --demo
 ```
 
 **Step 3: JKO Defensive Optimization (Threat Tuning)**
-Runs the core JAX-based Optimal Transport physics engine. It trains on a subset of the demo plays to find the optimal balance between Threat Reduction (IST) and Kinematic Smoothness. Choose 
+Runs the core JAX-based Optimal Transport physics engine. It trains on a subset of the demo plays to find the optimal balance between Threat Reduction (IST) and Kinematic Smoothness. 
 ```bash
 python src/gradient_flows/optimize.py --demo --trials 30
 ```
