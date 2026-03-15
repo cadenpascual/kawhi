@@ -69,7 +69,7 @@ python -m src.pipelines.compute_real_traj --demo
 **Step 3: JKO Defensive Optimization (Threat Tuning)**
 Runs the JAX physics engine to find the optimal balance between Threat Reduction and Kinematic Smoothness. 
 ```bash
-python src/gradient_flows/optimize.py --demo --trials 20
+python -m src/gradient_flows/optimize.py --demo --trials 20
 ```
 > **🔍 Verification:** Once the Pareto Front chart appears, identify the **Trial Number** that provides your desired balance of threat reduction and smoothness. You can view the parameters for this trial in the notebook's Optuna summary section.
 

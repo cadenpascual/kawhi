@@ -15,8 +15,8 @@ from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
 
 # Import from our project modules
-from .potentials import total_energy, _total_energy_per_defender, params as default_params
-from .solver import run_simulation, params as solver_params
+from src.gradient_flows.potentials import total_energy, _total_energy_per_defender, params as default_params
+from src.gradient_flows.solver import run_simulation, params as solver_params
 
 
 # --- Data Handling ---

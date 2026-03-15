@@ -6,8 +6,8 @@ import optuna
 import os
 from tqdm import tqdm
 
-from potentials import total_energy, params as default_params
-from solver import run_simulation
+from src.gradient_flows.potentials import total_energy, params as default_params
+from src.gradient_flows.solver import run_simulation
 
 def get_best_params(study_name, storage_name):
     """Loads the best parameters from an Optuna study if available."""

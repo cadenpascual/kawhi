@@ -8,9 +8,9 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 
 # Import from our existing modules
-from .potentials import params as default_params
-from .solver import run_simulation
-from .utils import prepare_play_data
+from src.gradient_flows.potentials import params as default_params
+from src.gradient_flows.solver import run_simulation
+from src.gradient_flows.utils import prepare_play_data
 
 def get_baseline_params(study_name, storage_name):
     """Loads the optimal kinematic baseline and enforces strict solver stability."""

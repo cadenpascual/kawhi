@@ -9,7 +9,7 @@ from ott.geometry.pointcloud import PointCloud
 from ott.tools.sinkhorn_divergence import sinkhorn_divergence
 
 # Import from our potential function module
-from .potentials import total_energy
+from src.gradient_flows.potentials import total_energy
 
 @jit
 def wasserstein_distance(x, y, epsilon):

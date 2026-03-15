@@ -147,7 +147,7 @@ def run_xfg_pipeline(input_path, output_parquet, output_map_npz):
 
 if __name__ == "__main__":
     run_xfg_pipeline(
-        input_path="data/demo/league_shots_2015-16.parquet",
+        input_path="data/demo/raw/league_shots_2015-16.parquet",
         output_parquet="data/demo/processed/all_season_shots.parquet",
         output_map_npz="data/demo/processed/maps_1ft_xpps.npz"
     )
