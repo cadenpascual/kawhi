@@ -47,73 +47,66 @@ To ensure reproducibility, please follow these steps to set up the Python enviro
 ---
 ## 🚀 How to Run the Project Pipeline
 
-### 🧪 The 3-Minute Capstone Demo (Recommended for Reviewers)
-To evaluate the Wasserstein physics engine and feature pipeline without processing 5 hours of 82-game tracking data, use the `--demo` flags. This routes the pipeline to a lightweight 1-game subset (`01.18.2016 GSW at CLE`).
+To ensure the data is processing correctly, follow this iterative pipeline: **Maps ➔ Trajectories ➔ Optimization ➔ Simulation**. 
+
+### 🧪 The 5-Minute Capstone Demo
+To evaluate the Wasserstein physics engine and feature pipeline without processing 82 games of tracking data, use the `--demo` flags. This routes the pipeline to a 1-game subset (`01.18.2016 GSW at CLE`). 
 
 **Step 1: Compute Player Spatial Maps**
-Generates the foundational xPPS (Expected Points Per Shot) spatial maps for the offensive players based on the demo subset.
+Generates foundational xPPS (Expected Points Per Shot) maps for offensive players.
 ```bash
-python -m src.pipelines.compute_player_maps
+python -m src.pipelines.compute_player_maps --demo
 ```
+> **🔍 Verification:** Open **`00_Quickstart_Demo.ipynb`** to verify that the spatial maps for key players (e.g., Stephen Curry, LeBron James) have loaded correctly.
 
 **Step 2: Compute Trajectories & Features**
-Parses the compressed SportVU tracking data, synchronizes it with play-by-play logs, and extracts the tracking trajectories of all 10 players.
+Extracts synchronized trajectories and defensive configurations.
 ```bash
 python -m src.pipelines.compute_real_traj --demo
 ```
+> **🔍 Verification:** Go back to the notebook and use the animation widget to view the **Real NBA Defense**. Ensure the player coordinates are properly aligned with the court boundaries.
 
 **Step 3: JKO Defensive Optimization (Threat Tuning)**
-Runs the core JAX-based Optimal Transport physics engine. It trains on a subset of the demo plays to find the optimal balance between Threat Reduction (IST) and Kinematic Smoothness. 
+Runs the JAX physics engine to find the optimal balance between Threat Reduction and Kinematic Smoothness. 
 ```bash
-python src/gradient_flows/optimize.py --demo --trials 30
+python src/gradient_flows/optimize.py --demo --trials 20
+```
+> **🔍 Verification:** Once the Pareto Front chart appears, identify the **Trial Number** that provides your desired balance of threat reduction and smoothness. You can view the parameters for this trial in the notebook's Optuna summary section.
+
+**Step 4: Generate Final Simulations**
+Applies your optimized parameters to the dataset to create the final simulated movements. Replace `12` with your chosen trial number.
+```bash
+python -m src.pipelines.compute_ist_traj --demo --trial 12
 ```
 
-> **Flag Guide:**
-> * `--demo`: Forces the script to use the lightweight datasets in `data/demo/`.
-> * `--trials [int]`: (Optional) Controls how many Bayesian search iterations Optuna runs. Default is 20, but you can increase it (e.g., 50 or 100) for a more refined Pareto Front.
+**Step 5: Final Interactive Audit**
+Return to **`00_Quickstart_Demo.ipynb`**. The notebook will now detect your simulated data, allowing you to run side-by-side animations and statistical reports comparing the **Real Defense** to your **Optimal JKO Defense**.
 
 ---
 
 ### 🌍 Full Season Execution (For Complete Analysis)
-If you want to run the pipeline on the complete raw 7z archives and execute the full 100-trial optimization across the entire dataset, simply omit the `--demo` flag.
+To run the pipeline on the full 2015-16 season data, simply omit the `--demo` flags.
 
-**Step 1: Compute Full Player Spatial Maps**
+**Step 1: Compute Full Maps**
 ```bash
 python -m src.pipelines.compute_player_maps
 ```
 
 **Step 2: Compute Full Trajectories**
-*(Note: Depending on your CPU cores, this multiprocessing step takes roughly 1-2 hours).*
 ```bash
 python -m src.pipelines.compute_real_traj
 ```
 
-**Step 3: Full Threat Optimization**
+**Step 3: Full Season Optimization**
 ```bash
 python src/gradient_flows/optimize.py --trials 100
 ```
 
+**Step 4: Full Season Simulation Generation**
+```bash
+python -m src.pipelines.compute_ist_traj --trial [YOUR_BEST_TRIAL]
+```
 ---
-
-## 🧠 Methodology & Notes
-
-### Defensive xFG & IST
-We model defense not as a direct predictor of missed shots, but as a contextual modifier of expected shot quality. The learned defense feature represents the **marginal risk induced by giving a shooter additional space**, enabling defender-specific guarding decisions rather than raw outcome prediction.
-
-*Note on Pre-Shot Application:* Our xFG (Expected Field Goal) and xPPS (Expected Points Per Shot) models were trained at shot time, but we utilize them pre-shot. This is valid because we interpret our Initial Spatial-Temporal (IST) metric as a latent, continuous threat, rather than a literal immediate probability of a shot.
-
-### Current Limitations (Deficiencies)
-Because our current "impact" metric is shot-based, it currently does not capture:
-* **Playmaking Gravity:** Passing and advantage creation.
-* **Screening:** Off-ball screening value and off-ball gravity.
-* **Foul-drawn Rim Pressure:** Missed shots that result in fouls are traditionally omitted from NBA shot charts, masking true rim-pressure value.
-
-### Core Variables Used
-The modeling utilizes the following extracted features:
-`GAME_ID`, `SHOT_EVENT_ID`, `tracking_event_id`, `release_frame_idx`, `event_list_idx`, `PERIOD`, `game_clock`, `PLAYER_ID`, `TEAM_ID`, `x_ft`, `y_ft`, `xFG_offense`, `xPPS_offense`, `SHOT_MADE_FLAG`, `close_def_dist_release`, `closest_def_dist`, `close_def_id`, `num_defenders_tracked`, `w0_close_def_dist_mean`, `w0_close_def_dist_min`, `w0_shooter_speed_mean`, `w0_shooter_speed_max`, `w0_def_speed_mean`, `w0_closing_speed_mean`, `w1_close_def_dist_mean`, `w1_close_def_dist_min`, `w1_shooter_speed_mean`, `w1_shooter_speed_max`, `w1_def_speed_mean`, `w1_closing_speed_mean`, `shooter_speed`, `game_clock_tracking`, `shot_clock_tracking`, `w0_shooter_accel_mean`, `w1_shooter_accel_mean`, `Real_IST`, `Real_Q`, `Real_O`, `Real_S`, `Empirical_IST`
-
----
-
 ## 📊 Data Sources & References
 
 ### Primary Data Sources
@@ -136,18 +129,6 @@ Holds all data required and generated by the project. *(Note: Large files are ig
 * `raw/`: Unmodified datasets (Play-by-play logs, `.7z` tracking data, basic defense stats).
 * `processed/`: Cleaned, transformed, and feature-engineered data (Parquet features, aggregated `.csv` IST tables, `.npz` shot maps, and SQLite `.db` optimization results).
 
-### `notebooks/`
-Jupyter notebooks detailing the data science pipeline:
-* `01_data_exploration.ipynb` - Initial EDA.
-* `02_label_events.ipynb` - Labeling specific basketball events.
-* `03_calculate_xfg.ipynb` - Calculating xFG probabilities.
-* `04_defensive_features.ipynb` - Extracting spatial features for defenders.
-* `05_bigdata_pipeline.ipynb` - Scaling the data processing pipeline.
-* `06` & `07_calculate_ist...` - Computing IST distributions.
-* `08_optimize_variables.ipynb` - Preparing boundary variables.
-* `09_run_simulated_defense.ipynb` - Core Wasserstein Gradient Flow simulations.
-* `10` & `11_agg_data...` - Post-simulation aggregations.
-* `12_report_visualizations.ipynb` - Final plots and figures.
 
 ### `src/` (Codebase Architecture)
 Core Python source code modules organized by domain:
