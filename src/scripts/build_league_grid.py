@@ -1,5 +1,5 @@
 from src.data_sources.nba_api_shots import fetch_league_shots
-from src.features.shot_maps import contested_fg_grids
+from src.features.shots.shot_maps import contested_fg_grids
 from src.data_io.grids import save_grids
 
 def main():

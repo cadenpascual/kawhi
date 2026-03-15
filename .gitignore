@@ -211,4 +211,5 @@ __marimo__/
 
 # data is too large to add
 data/processed/tracking
-data/raw/7z/
+data/raw/tracking
+data/demo

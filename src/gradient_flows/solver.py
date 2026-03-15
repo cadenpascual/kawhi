@@ -71,42 +71,37 @@ def apply_constraints(defenders_next, defenders_prev, params):
 def run_simulation(init_defenders, ball_traj, offenders_traj, q_traj, basket_pos, params, jko_num_steps):
     """
     Runs the full defensive simulation over a trajectory using JAX's `scan`.
-    This version includes an acceleration penalty and internal constraints.
+    If q_traj is None, it defaults to a zero-filled array of the appropriate shape.
     """
-    trajectory_data = (ball_traj, offenders_traj, q_traj)
+    # If no q_traj is provided, create a dummy array of zeros 
+    # matching the number of timesteps and number of offenders (5).
+    if q_traj is None:
+        q_traj = jnp.zeros((offenders_traj.shape[0], 5))
     
-    # The initial carry now contains two states for the acceleration penalty
+    trajectory_data = (ball_traj, offenders_traj, q_traj)
     init_carry = (init_defenders, init_defenders)
 
     def simulation_step(carry, traj_slice):
-        """
-        Performs a single step of the simulation, including JKO optimization
-        and constraint application.
-        """
         defenders_prev, defenders_prev_prev = carry
-        ball_pos, offenders_pos, q_values = traj_slice
+        ball_pos, offenders_pos, q_values = traj_slice # q_values is now always an array
         
-        # --- JKO Step ---
-        # Chain the optimizer with gradient clipping for stability
         optimizer = optax.chain(
             optax.clip_by_global_norm(params['max_gradient_norm']),
             optax.adam(learning_rate=params['learning_rate'])
         )
 
         def loss_fn(defenders_cand):
-            # Potential Energy (The "Goal")
+            # Potential Energy: total_energy now receives q_values (actual or zeros)
             energy = jnp.sum(total_energy(defenders_cand, offenders_pos, q_values, ball_pos, basket_pos, params))
             
-            # Kinetic Energy (The "Cost of Distance")
+            # Kinetic Energy / Optimal Transport Cost
             w2_dist = wasserstein_distance(defenders_cand, defenders_prev, epsilon=params['sinkhorn_epsilon'])
             
-            # Acceleration Penalty (The "Cost of Jerkiness")
-            # This prevents the 1:1 "vibrating" shadow effect.
+            # Acceleration Penalty
             accel = defenders_cand - 2 * defenders_prev + defenders_prev_prev
             acceleration_penalty = jnp.sum(jnp.square(accel))
             
-            # Velocity Penalty (The "Friction")
-            # Directly penalizes high speeds, even if they are within the cap.
+            # Velocity Penalty
             velocity_penalty = jnp.sum(jnp.square(defenders_cand - defenders_prev))
             
             return (energy + 
@@ -115,32 +110,22 @@ def run_simulation(init_defenders, ball_traj, offenders_traj, q_traj, basket_pos
                     params['velocity_penalty_weight'] * velocity_penalty)
 
         loss_grad_fn = jax.grad(loss_fn)
-
-        # Initialize the optimization from the previous step's positions
         y = defenders_prev
         opt_state = optimizer.init(y)
 
         def opt_step(i, state):
-            """A single step of the ADAM optimizer with internal constraints."""
             y, opt_state = state
             grads = loss_grad_fn(y)
             updates, opt_state = optimizer.update(grads, opt_state, y)
             y_unconstrained = optax.apply_updates(y, updates)
-
-            # CRITICAL: Apply constraints INSIDE the loop to keep the optimizer
-            # from exploring non-physical states.
             y_constrained = apply_constraints(y_unconstrained, defenders_prev, params)
-            
             return y_constrained, opt_state
 
-        # Run the inner optimization loop to find the best `defenders_next`
         defenders_next, _ = jax.lax.fori_loop(0, jko_num_steps, opt_step, (y, opt_state))
         
-        # The new carry for the next step includes the current and previous states
         next_carry = (defenders_next, defenders_prev)
         return next_carry, defenders_next
 
-    # Use `jax.lax.scan` for an efficient, end-to-end differentiable loop
     final_carry, defenders_trajectory = jax.lax.scan(
         simulation_step,
         init_carry,

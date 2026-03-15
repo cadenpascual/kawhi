@@ -48,30 +48,60 @@ To ensure reproducibility, please follow these steps to set up the Python enviro
 
 ## 🚀 Exact Commands to Run Experiments
 
-The K.A.W.H.I. pipeline is broken down into specific modules. To reproduce our defensive feature extraction and Wasserstein Gradient Flow optimizations, run the following commands in order from the root directory:
+## 🚀 How to Run the Project Pipeline
 
-**1. Data Parsing & Ingestion**
-Extracts the raw 7z Second Spectrum tracking files and converts them into structured JSON events.
+### 0. Environment Setup
+Before running the pipeline, ensure your environment has all the required physics, machine learning, and optimal transport libraries installed:
 ```bash
-python src/scripts/7z_to_json.py
+pip install -r requirements.txt
 ```
 
-**2. Feature Engineering**
-Generates the defensive spatial statistics and Initial Spatial-Temporal (IST) states.
+---
+
+### 🧪 The 3-Minute Capstone Demo (Recommended for Reviewers)
+To evaluate the Wasserstein physics engine and feature pipeline without processing 5 hours of 82-game tracking data, use the `--demo` flags. This routes the pipeline to a lightweight 1-game subset (`01.18.2016 GSW at CLE`).
+
+**Step 1: Compute Player Spatial Maps**
+Generates the foundational xPPS (Expected Points Per Shot) spatial maps for the offensive players based on the demo subset.
 ```bash
-python src/pipelines/defense_parquet.py
+python -m src.pipelines.compute_player_maps
 ```
 
-**3. Wasserstein Optimization Simulations**
-Runs the core math/physics engine to simulate optimal defensive movements.
+**Step 2: Compute Trajectories & Features**
+Parses the compressed SportVU tracking data, synchronizes it with play-by-play logs, and extracts the tracking trajectories of all 10 players.
 ```bash
-python src/gradient_flows/optimize.py
+python -m src.pipelines.compute_traj --demo
 ```
 
-**4. Generate Final Visualizations**
-To view the final spatial expected value maps, defensive pressure heatmaps, and results, execute the final visualization notebook:
+**Step 3: JKO Defensive Optimization (Threat Tuning)**
+Runs the core JAX-based Optimal Transport physics engine. It trains on a subset of the demo plays to find the optimal balance between Threat Reduction (IST) and Kinematic Smoothness. Choose 
 ```bash
-jupyter nbconvert --to notebook --execute notebooks/12_report_visualizations.ipynb
+python src/gradient_flows/optimize.py --demo --trials 30
+```
+
+> **Flag Guide:**
+> * `--demo`: Forces the script to use the lightweight datasets in `data/demo/`.
+> * `--trials [int]`: (Optional) Controls how many Bayesian search iterations Optuna runs. Default is 20, but you can increase it (e.g., 50 or 100) for a more refined Pareto Front.
+
+---
+
+### 🌍 Full Season Execution (For Complete Analysis)
+If you want to run the pipeline on the complete raw 7z archives and execute the full 100-trial optimization across the entire dataset, simply omit the `--demo` flag.
+
+**Step 1: Compute Full Player Spatial Maps**
+```bash
+python -m src.pipelines.compute_player_maps
+```
+
+**Step 2: Compute Full Trajectories**
+*(Note: Depending on your CPU cores, this multiprocessing step takes roughly 1-2 hours).*
+```bash
+python -m src.pipelines.compute_traj
+```
+
+**Step 3: Full Threat Optimization**
+```bash
+python src/gradient_flows/optimize.py --trials 100
 ```
 
 ---
@@ -145,3 +175,18 @@ Core Python source code modules organized by domain:
 
 ### `images/` & `docs/`
 Contains the generated charts (e.g., `harden_density.png`, expected FG heatmaps) and markdown files to render project reports.
+
+## 🗺️ Forward Roadmap & Future Work
+
+While the core Wasserstein Gradient Flow models and Expected Field Goal (xFG) pipelines are fully functional, we have identified several areas for future improvement:
+
+- **[ ] Integrate Playmaking Gravity:** Current IST models are shot-based. Future iterations should incorporate pass-probability and advantage-creation metrics.
+- **[ ] Off-Ball Screening Evaluation:** Expand the repulsive potentials in the gradient flow to account for off-ball screens and off-ball movement gravity.
+- **[ ] Optimization Speed:** Migrate the core numerical solver in `solver.py` to leverage JAX's `vmap` and `@jit` decorators for faster simulation across full 82-game seasons.
+- **[ ] Real-Time API:** Package the pipeline into a Flask/FastAPI endpoint for real-time defensive evaluations.
+
+While the core JKO simulation demonstrates significant improvements in defensive positioning, we have identified several physical and structural constraints for future optimization:
+
+* **[ ] Velocity Control (Speed Constraints):** Current simulated defenders occasionally surpass human speed limits to escape steep Gaussian gravity wells. Future work involves refining the kinetic penalty to enforce strict, realistic velocity caps.
+* **[ ] Posture-Based Offender Threat:** Currently, defenders evaluate off-ball threats purely via distance to the ball. Future extensions will utilize Graph Convolutional Neural Networks (GCN) to adjust offensive potentials based on player momentum and bodily posture.
+* **[ ] Heterogeneous Defensive Profiles:** The current model assumes defensive homogeneity. Future iterations will incorporate individual impact metrics (e.g., wingspan, lateral quickness) to differentiate between elite interior protectors (like Victor Wembanyama) and high-pressure perimeter defenders (like Alex Caruso).

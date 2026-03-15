@@ -3,111 +3,9 @@ import numpy as np
 from matplotlib.patches import Circle, Rectangle, Arc
 import matplotlib.colors as mcolors
 from scipy.ndimage import gaussian_filter  # <-- The smoothing tool
+from nba_api.stats.static import players
 
-def plot_frame(frame, team_colors=None):
-    """
-    Plot a single NBA frame with players split by team and the ball.
-    
-    Parameters
-    ----------
-    frame : dict
-        Single frame dictionary with keys: 'ball', 'players', 'frame_id', etc.
-    team_colors : dict, optional
-        Mapping from teamid to color. Example: {1610612739: 'blue', 1610612744: 'red'}
-    """
-    
-    if team_colors is None:
-        team_colors = {}
-    
-    plt.figure(figsize=(15, 7))
-    
-    # Draw court boundaries (simplified rectangle)
-    plt.plot([0, 50], [0, 0], color='black')   # baseline
-    plt.plot([0, 50], [94, 94], color='black') # opposite baseline
-    plt.plot([0, 0], [0, 94], color='black')   # sideline
-    plt.plot([50, 50], [0, 94], color='black') # opposite sideline
-    
-    # Draw the ball
-    ball = frame["ball"]
-    plt.scatter(ball["x"], ball["y"], c='orange', s=200, marker='o', label='Ball', edgecolors='black')
-    
-    # Plot players
-    for player in frame["players"]:
-        x, y = player["x"], player["y"]
-        teamid = player["teamid"]
-        color = team_colors.get(teamid, 'green')  # default green if teamid not in dict
-        plt.scatter(x, y, c=color, s=150, label=f'Team {teamid}' if f'Team {teamid}' not in plt.gca().get_legend_handles_labels()[1] else "")
-        plt.text(x+0.5, y+0.5, str(player["playerid"]), fontsize=9, color=color)
-    
-    plt.xlim(0, 50)
-    plt.ylim(0, 94)
-    plt.xlabel("Court X (ft)")
-    plt.ylabel("Court Y (ft)")
-
-    # convert game clock to MM:SS format
-    minutes = int(frame['game_clock'] // 60)
-    seconds = int(frame['game_clock'] % 60)
-
-    # get shot clock if available
-    shot_clock = (frame['shot_clock'])
-    shot_str = f"{shot_clock:.1f}s" if shot_clock is not None else "-"
-
-    plt.title(f"Frame {frame['frame_id']} - Game Clock: {minutes:02d}:{seconds:02d} | Shot Clock: {shot_str}")
-    plt.legend()
-    plt.show()
-
-
-def draw_half_court(ax=None, color="black", lw=2, outer_lines=False, zorder=2):
-    if ax is None:
-        ax = plt.gca()
-
-    Y_SHIFT = 47.5  # shift old court coords up so baseline becomes y=0
-
-    # Hoop & backboard
-    hoop = Circle((0, 0 + Y_SHIFT), radius=7.5, linewidth=lw, color=color, fill=False)
-    backboard = Rectangle((-30, -7.5 + Y_SHIFT), 60, -1, linewidth=lw, color=color)
-
-    # Paint
-    outer_box = Rectangle((-80, -47.5 + Y_SHIFT), 160, 190, linewidth=lw, color=color, fill=False)
-    inner_box = Rectangle((-60, -47.5 + Y_SHIFT), 120, 190, linewidth=lw, color=color, fill=False)
-
-    # Free throw arcs
-    top_free_throw = Arc((0, 142.5 + Y_SHIFT), 120, 120, theta1=0, theta2=180,
-                         linewidth=lw, color=color)
-    bottom_free_throw = Arc((0, 142.5 + Y_SHIFT), 120, 120, theta1=180, theta2=0,
-                            linewidth=lw, color=color, linestyle="dashed")
-
-    # Restricted arc
-    restricted = Arc((0, 0 + Y_SHIFT), 80, 80, theta1=0, theta2=180, linewidth=lw, color=color)
-
-    # Corner 3 lines (14ft = 168 inches tall)
-    corner_three_a = Rectangle((-220, -47.5 + Y_SHIFT), 0, 140, linewidth=lw, color=color)
-    corner_three_b = Rectangle((220, -47.5 + Y_SHIFT), 0, 140, linewidth=lw, color=color)
-
-    # 3pt arc (same as your original; works visually)
-    three_arc = Arc((0, 0 + Y_SHIFT), 475, 475, theta1=22, theta2=158, linewidth=lw, color=color)
-
-    # Center court arcs
-    center_outer_arc = Arc((0, 422.5 + Y_SHIFT), 120, 120, theta1=180, theta2=0, linewidth=lw, color=color)
-    center_inner_arc = Arc((0, 422.5 + Y_SHIFT), 40, 40, theta1=180, theta2=0, linewidth=lw, color=color)
-
-    court_elements = [
-        hoop, backboard, outer_box, inner_box, top_free_throw, bottom_free_throw,
-        restricted, corner_three_a, corner_three_b, three_arc,
-        center_outer_arc, center_inner_arc
-    ]
-
-    if outer_lines:
-        outer = Rectangle((-250, 0), 500, 470, linewidth=lw, color=color, fill=False)  # baseline now y=0
-        court_elements.append(outer)
-
-    for e in court_elements:
-        e.set_zorder(zorder)
-        ax.add_patch(e)
-
-    return ax
-
-# --- 1. DEFINE THE CUSTOM CLIPPERS COLORMAP ---
+# --- 1. DEFINE THE COLORMAP ---
 C_COLD = '#1D428A'  # Naval Blue
 C_HOT = '#C8102E'   # Ember Red
 C_COURT = '#BEC0C2' # Clippers Silver / Grey for court lines
@@ -198,41 +96,29 @@ def draw_half_court_ft(ax=None, color="black", lw=2, outer_lines=False, zorder=3
 
 def plot_player_map_on_court(grid, extent=(-25, 25, -5, 42), title=None, alpha=0.85,
                              xlim=(-25, 25), ylim=(-5, 42), transpose=True, 
-                             vmin=0.0, vmax=None, midpoint=1.0):
-    """
-    Plots an absolute xPPS map using a DIVERGING colormap.
-    Values below 'midpoint' appear Blue; values above appear Red.
-    """
+                             vmin=0.0, vmax=None, midpoint=1.0,
+                             ax=None, figsize=(4,3.5),
+                             dpi=150, title_size=14):
+    
     safe_grid = np.nan_to_num(grid, nan=0.0)
     smoothed_grid = gaussian_filter(safe_grid, sigma=1.2)
     grid_to_plot = smoothed_grid.T if transpose else smoothed_grid
 
-    # If vmax isn't provided, calculate it from the grid
     if vmax is None:
         vmax = np.max(grid_to_plot)
-    
-    # Ensure midpoint is within the range for the Norm to work
     actual_vmax = max(vmax, midpoint + 0.01)
-    
-    # TwoSlopeNorm allows us to fix the 'White' color exactly at the midpoint (1.0)
-    # even if the range (0.0 to 1.5) is not centered.
     norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=midpoint, vmax=actual_vmax)
 
-    fig, ax = plt.subplots(figsize=(7, 6), dpi=300)
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    else:
+        fig = ax.figure 
     
-    # Plot heatmap with Diverging Colormap
     im = ax.imshow(
-        grid_to_plot,
-        origin="lower",
-        extent=extent,
-        aspect="equal",
-        alpha=alpha,
-        zorder=1,
-        cmap=clippers_cmap,
-        norm=norm
+        grid_to_plot, origin="lower", extent=extent, aspect="equal",
+        alpha=alpha, zorder=1, cmap=clippers_cmap, norm=norm
     )
 
-    # Draw high-accuracy court lines (using dark grey for neutral contrast)
     draw_half_court_ft(ax=ax, color='#333333', lw=2, outer_lines=True, zorder=3)
 
     ax.set_xlim(*xlim)
@@ -245,13 +131,11 @@ def plot_player_map_on_court(grid, extent=(-25, 25, -5, 42), title=None, alpha=0
         spine.set_visible(False)
         
     if title: 
-        ax.set_title(title, fontsize=16, fontweight='black', pad=15)
+        ax.set_title(title, fontsize=title_size, fontweight='black', pad=15)
 
-    # Add Colorbar to show the scale
-    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    # Attach the colorbar specifically to this axis
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label("Shot Quality (xPPS)", fontweight='bold', labelpad=10)
-        
-    plt.show()
 
 def plot_relative_xpps_map(player_grid, league_grid, extent=(-25, 25, -5, 42), 
                            xlim=(-25, 25), ylim=(-5, 42),
@@ -301,4 +185,60 @@ def plot_relative_xpps_map(player_grid, league_grid, extent=(-25, 25, -5, 42),
     cbar.outline.set_linewidth(1.5)
     cbar.set_label("xPPS vs League Average", rotation=270, labelpad=15, fontweight='bold')
         
+    plt.show()
+
+def plot_players_by_name(player_names, maps, pid2row, fixed_vmax=None, baseline=1.0, 
+                         size_per_plot=(4, 3.5), dpi=150):
+    player_data = []
+    
+    for name in player_names:
+        search_result = players.find_players_by_full_name(name)
+        if not search_result: continue
+            
+        player_id = search_result[0]['id']
+        actual_name = search_result[0]['full_name']
+        
+        if player_id not in pid2row: continue
+            
+        grid = maps['quality'][pid2row[player_id]]
+        player_data.append({"name": actual_name, "grid": grid})
+        
+    if not player_data:
+        print("No valid players found to plot. Exiting.")
+        return
+
+    n_players = len(player_data)
+    
+    if fixed_vmax is None:
+        global_vmax = max([np.max(p["grid"]) for p in player_data])
+    else:
+        global_vmax = fixed_vmax
+
+    # ---> NEW: Calculate total image size and dynamic font size
+    total_width = size_per_plot[0] * n_players
+    total_height = size_per_plot[1]
+    
+    # Mathematical scaling: ~3.5x the width in inches, minimum 9pt font
+    dynamic_font = max(9, int(size_per_plot[0] * 3.5))
+
+    # ---> NEW: Create a 1-Row, N-Column grid of subplots
+    fig, axes = plt.subplots(1, n_players, figsize=(total_width, total_height), dpi=dpi)
+    
+    # Ensure axes is iterable even if we only plotted 1 player
+    if n_players == 1:
+        axes = [axes]
+
+    # Draw each player onto their designated subplot in the grid
+    for ax, p in zip(axes, player_data):
+        plot_player_map_on_court(
+            p["grid"], 
+            title=f"{p['name']}", 
+            vmax=global_vmax, 
+            midpoint=baseline,
+            ax=ax,                   # Tells it to draw on this specific subplot
+            title_size=dynamic_font  # Passes the scaled font size down
+        )
+        
+    # Neatly spaces the charts so colorbars don't overlap
+    plt.tight_layout()
     plt.show()

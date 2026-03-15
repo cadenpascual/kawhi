@@ -11,8 +11,7 @@ from jax import jit, vmap, vmap
 from IPython.display import clear_output, display
 import time
 from .animation import animate_comparison_play
-
-from .solver import run_simulation
+from .viz_tools import run_simulation
 
 # --- Visualization Helper --- #
 
@@ -34,71 +33,53 @@ def smooth_trajectory(traj, alpha=0.3):
 
 # --- Data Extraction --- #
 
-def extract_trajectories_from_row(row, solver_params, pad_for_bulk=True):
-    """Extracts raw data, pads to fixed length for JAX, and runs the JKO simulations."""
+def extract_trajectories_from_row(row, solver_params):
+    # 1. Extract Ball Data -> Shape: (num_frames, 2)
     ball_traj = jnp.stack([jnp.array(row['ball_y_traj']) + 5.25, 
                            jnp.array(row['ball_x_traj']) + 25.0], axis=1)
     
+    # 2. Extract Player Data
     off_list, q_list, def_list, off_ids = [], [], [], []
     for i in range(1, 6):
+        # Offense: (num_frames, 2) per player
         off_list.append(jnp.stack([jnp.array(row[f'off{i}_y_traj']) + 5.25, 
                                    jnp.array(row[f'off{i}_x_traj']) + 25.0], axis=1))
+        
+        # Q-values: (num_frames,) per player
         q_list.append(jnp.array(row[f'off{i}_q_traj']))
+        
+        # Defense: (num_frames, 2) per player
         def_list.append(jnp.stack([jnp.array(row[f'def{i}_y_traj']) + 5.25, 
                                    jnp.array(row[f'def{i}_x_traj']) + 25.0], axis=1))
+        
         off_ids.append(jnp.array(row[f'off{i}_pid']))
         
+    # 3. Stack into 3D Arrays -> Shape: (num_frames, 5, 2)
     off_traj = jnp.stack(off_list, axis=1) 
     q_traj = jnp.stack(q_list, axis=1)     
     real_def_traj = jnp.stack(def_list, axis=1)
 
-    shot_frame = int(row['local_release_idx'])
-
-    # -- STRICT PADDING FOR JAX COMPILATION CACHING --
-    if pad_for_bulk:
-        MAX_FRAMES = 75
-        cutoff_idx = shot_frame  
-        
-        ball_traj = ball_traj[:cutoff_idx]
-        off_traj = off_traj[:cutoff_idx]
-        q_traj = q_traj[:cutoff_idx]
-        real_def_traj = real_def_traj[:cutoff_idx]
-        
-        current_len = ball_traj.shape[0]
-        
-        if current_len < MAX_FRAMES:
-            pad_len = MAX_FRAMES - current_len
-            ball_traj = jnp.pad(ball_traj, ((0, pad_len), (0, 0)), mode='edge')
-            off_traj = jnp.pad(off_traj, ((0, pad_len), (0, 0), (0, 0)), mode='edge')
-            q_traj = jnp.pad(q_traj, ((0, pad_len), (0, 0)), mode='edge')
-            real_def_traj = jnp.pad(real_def_traj, ((0, pad_len), (0, 0), (0, 0)), mode='edge')
-            actual_shot_frame = current_len 
-        else:
-            ball_traj = ball_traj[:MAX_FRAMES]
-            off_traj = off_traj[:MAX_FRAMES]
-            q_traj = q_traj[:MAX_FRAMES]
-            real_def_traj = real_def_traj[:MAX_FRAMES]
-            actual_shot_frame = MAX_FRAMES
-            
-    else:
-        actual_shot_frame = shot_frame 
-
-    # -- Weights Calculation --
+    # 4. Compute Weights
+    # ball_traj[:, None, :] broadcasts to (num_frames, 1, 2) for distance calculation
     ball_dist = jnp.linalg.norm(off_traj - ball_traj[:, None, :], axis=2)
     b_traj = 0.4 + 0.6 * (1.0 / (1.0 + jnp.exp(0.3 * (ball_dist - 18.0))))
+    
     sim_weights = jnp.maximum((q_traj ** solver_params.get('ist_q_exp', 1.0)) * b_traj, 0.35)  
+    
+    # 5. Hoop Position
     basket_pos = jnp.array([5.25, 25.0]) if jnp.mean(real_def_traj[0, :, 0]) < 47.0 else jnp.array([88.75, 25.0])
         
-    # -- Run Simulations --
+    # 6. Run Simulation
     params_no_ist = solver_params.copy()
     params_no_ist['ist_weight'] = 0.0
     raw_sim_traj = run_simulation(real_def_traj[0], ball_traj, off_traj, q_traj, basket_pos, params_no_ist, 20)
     sim_def_no_ist_traj = smooth_trajectory(raw_sim_traj[:len(off_traj)])
 
     raw_sim_ist_traj = run_simulation(real_def_traj[0], ball_traj, off_traj, q_traj, basket_pos, solver_params, 20)
-    sim_def_ist_traj = smooth_trajectory(raw_sim_ist_traj[:len(off_traj)]) 
+    sim_def_ist_traj = smooth_trajectory(raw_sim_ist_traj[:len(off_traj)]) # Match lengths
    
-    # -- IST Distances --
+
+    # 7. Display IST Calculation 
     off_exp = off_traj[:, :, None, :]
     sim_no_ist_dist = jnp.min(jnp.linalg.norm(off_exp - sim_def_no_ist_traj[:, None, :, :], axis=-1), axis=2)
     sim_ist_dist = jnp.min(jnp.linalg.norm(off_exp - sim_def_ist_traj[:, None, :, :], axis=-1), axis=2)
@@ -109,19 +90,13 @@ def extract_trajectories_from_row(row, solver_params, pad_for_bulk=True):
     weights_sim_ist = sim_weights * (jnp.clip(sim_ist_dist / 6.0, 0.5, 1.5) ** o_exp)
     weights_real = sim_weights * (jnp.clip(real_dist / 6.0, 0.5, 1.5) ** o_exp)
 
-    # -- Zero-Out Post-Shot Padding --
-    if pad_for_bulk:
-        weights_sim_no_ist = weights_sim_no_ist.at[actual_shot_frame:].set(0.0)
-        weights_sim_ist = weights_sim_ist.at[actual_shot_frame:].set(0.0)
-        weights_real = weights_real.at[actual_shot_frame:].set(0.0)
-    else:
-        weights_sim_no_ist = weights_sim_no_ist.at[shot_frame+10:].set(0.0)
-        weights_sim_ist = weights_sim_ist.at[shot_frame+10:].set(0.0)
-        weights_real = weights_real.at[shot_frame+10:].set(0.0)
+    # 8. Cutoff IST Calculation at Shot Frame
+    shot_frame = row['local_release_idx']
+    weights_sim_no_ist = weights_sim_no_ist.at[shot_frame+10:].set(0.0)
+    weights_sim_ist = weights_sim_ist.at[shot_frame+10:].set(0.0)
+    weights_real = weights_real.at[shot_frame+10:].set(0.0)
 
-    return (sim_def_no_ist_traj, sim_def_ist_traj, real_def_traj, 
-            weights_sim_no_ist, weights_sim_ist, weights_real, 
-            off_traj, ball_traj, basket_pos, off_ids, actual_shot_frame)
+    return sim_def_no_ist_traj, sim_def_ist_traj, real_def_traj, weights_sim_no_ist, weights_sim_ist, weights_real, off_traj, ball_traj, basket_pos, off_ids, shot_frame
 
 def prepare_play_data(row):
     """Extracts and slices data specifically up to the local_release_idx."""
@@ -175,105 +150,103 @@ def prepare_play_data(row):
 
 def get_play_summary(row, params):
     """
-    Calculates aggregate pressure statistics for a play.
-    Compares the Real Defense against the JKO Simulated Defense.
+    Upgraded: Uses all 11 arguments from extract_trajectories_from_row.
+    Calculates the 'Systemic Success' by comparing frame-by-frame performance.
     """
-    # Extract the play type label we just created (default to 'Unlabeled' if missing)
     play_type = row.get('play_action', 'Unlabeled')
     
-    # 1. Run the simulation
-    res = extract_trajectories_from_row(row, params)
-    sim_traj, real_traj, ball_traj, ist_sim, ist_real, off_traj, basket = res
+    # 1. Extract the full set of results
+    (sim_def_no_ist_traj, 
+     sim_def_ist_traj, 
+     real_def_traj, 
+     weights_sim_no_ist, 
+     weights_sim_ist, 
+     weights_real, 
+     off_traj, 
+     ball_traj, 
+     basket_pos, 
+     off_ids, 
+     shot_frame) = extract_trajectories_from_row(row, params)
     
-    # 2. Identify the shot frame (the point of ball release)
-    shot_frame = int(row['local_release_idx'])
+    # 2. Slice to the active play (before shot release)
+    # We use weights_real and weights_sim_ist for the primary comparison
+    ist_sim_active = weights_sim_ist[:shot_frame]
+    ist_real_active = weights_real[:shot_frame]
     
-    # 3. Mask the trajectories
-    ist_sim_active = ist_sim.at[shot_frame:].set(0.0)
-    ist_real_active = ist_real.at[shot_frame:].set(0.0)
+    # 3. Calculate Team Totals per frame (Summing across the 5 offenders)
+    team_sim_per_frame = np.sum(ist_sim_active, axis=1)
+    team_real_per_frame = np.sum(ist_real_active, axis=1)
     
-    # 4. Calculate Aggregate Statistics
-    total_real_pressure = float(jnp.sum(ist_real_active))
-    total_sim_pressure = float(jnp.sum(ist_sim_active))
+    # --- THE SYSTEMIC SUCCESS CALCULATION ---
+    # How often was the Optimized Sim actually lower threat than the Real Defense?
+    frames_won = np.sum(team_sim_per_frame < team_real_per_frame)
+    win_rate = (frames_won / shot_frame) * 100 if shot_frame > 0 else 0
     
-    # Pressure Saved (Positive means the Simulation was 'Better' / tighter)
-    pressure_saved = total_real_pressure - total_sim_pressure
-    pct_improvement = (pressure_saved / total_real_pressure) * 100 if total_real_pressure > 0 else 0
+    # 4. Aggregate Totals for the Play
+    total_real = float(np.sum(team_real_per_frame))
+    total_sim = float(np.sum(team_sim_per_frame))
+    pressure_saved = total_real - total_sim
+    pct_improvement = (pressure_saved / total_real) * 100 if total_real > 0 else 0
+    
+    # 5. Baseline Comparison (Sim with IST vs Sim without IST)
+    # This proves the "IST Logic" is specifically what is helping
+    total_no_ist_sim = float(np.sum(np.sum(weights_sim_no_ist[:shot_frame], axis=1)))
+    ist_added_value = total_no_ist_sim - total_sim
     
     return {
         "Play Index": row.name,
-        "Play Type": play_type,  # <-- NEW: Added to output
-        "Total Real IST": round(total_real_pressure, 2),
-        "Total Sim IST": round(total_sim_pressure, 2),
+        "Play Type": play_type,
+        "Total Real IST": round(total_real, 2),
+        "Total Sim IST": round(total_sim, 2),
         "Pressure Prevented": round(pressure_saved, 2),
-        "Efficiency Gain (%)": f"{pct_improvement:.1f}%",
+        "Efficiency Gain (%)": pct_improvement,
+        "Frame Win Rate (%)": round(win_rate, 1),
+        "IST Value Add": round(ist_added_value, 2), # Value of the IST model specifically
         "Active Frames": shot_frame
     }
 
 def get_global_report(summary_df):
-    # 1. Clean data (convert string percentages to floats)
-    if summary_df['Efficiency Gain (%)'].dtype == object:
-        eff_floats = summary_df['Efficiency Gain (%)'].str.replace('%', '').astype(float)
-        summary_df['Efficiency Gain Float'] = eff_floats
-    else:
-        summary_df['Efficiency Gain Float'] = summary_df['Efficiency Gain (%)']
-        
-    total_real_ist = summary_df['Total Real IST'].sum()
-    total_sim_ist = summary_df['Total Sim IST'].sum()
-    total_pressure_prevented = summary_df['Pressure Prevented'].sum()
+    """
+    Prints a professional 'Front Office' style report.
+    """
+    # 1. Metric Calculations
+    total_real = summary_df['Total Real IST'].sum()
+    total_prevented = summary_df['Pressure Prevented'].sum()
+    global_gain = (total_prevented / total_real) * 100
     
-    # 2. Overall Defensive Efficiency 
-    global_efficiency = (total_pressure_prevented / total_real_ist) * 100 if total_real_ist > 0 else 0
-    
-    # 3. Play-Level Stats
-    avg_gain = summary_df['Efficiency Gain Float'].mean()
-    median_gain = summary_df['Efficiency Gain Float'].median()
-    std_gain = summary_df['Efficiency Gain Float'].std()
-    
-    # 4. Outlier Detection (Top 3 Defensive Lapses)
-    top_3_lapses = summary_df.nlargest(3, 'Pressure Prevented')[
-        ['Play Index', 'Play Type', 'Pressure Prevented', 'Efficiency Gain (%)']
-    ]
+    avg_win_rate = summary_df['Frame Win Rate (%)'].mean()
+    median_gain = summary_df['Efficiency Gain (%)'].median()
+    std_dev = summary_df['Efficiency Gain (%)'].std()
 
-    # --- NEW: 5. PLAY TYPE AGGREGATION ---
-    # Group by Play Type and calculate volume and efficiency
+    # 2. Printing the Report
+    print("="*42)
+    print("      CLIPPERS SPATIAL AUDIT: GLOBAL REPORT")
+    print("="*42)
+    print(f"Total Plays Analyzed:       {len(summary_df)}")
+    print(f"Total IST Units Prevented:  {total_prevented:,.2f}")
+    print(f"---")
+    print(f"GLOBAL EFFICIENCY GAIN:     {global_gain:.2f}%")
+    print(f"SYSTEMIC SUCCESS RATE:      {avg_win_rate:.1f}% of frames improved")
+    print(f"---")
+    print(f"Median Gain per Play:       {median_gain:.2f}%")
+    print(f"Model Consistency (σ):      {std_dev:.2f}%")
+    
+    # 3. Play Type Breakdown
+    print("\n" + "="*42)
+    print("      EFFICIENCY BY PLAY CATEGORY")
+    print("="*42)
     type_stats = summary_df.groupby('Play Type').agg(
         Count=('Play Index', 'count'),
-        Total_Real_IST=('Total Real IST', 'sum'),
-        Total_Pressure_Saved=('Pressure Prevented', 'sum')
-    ).reset_index()
-    
-    # Calculate True Efficiency Gain per play type
-    type_stats['Efficiency Gain'] = (type_stats['Total_Pressure_Saved'] / type_stats['Total_Real_IST'] * 100)
-    type_stats['Efficiency Gain'] = type_stats['Efficiency Gain'].fillna(0).apply(lambda x: f"{x:.1f}%")
-    
-    # Clean up columns for printing
-    type_stats = type_stats[['Play Type', 'Count', 'Efficiency Gain']].sort_values(by='Count', ascending=False)
+        Avg_Gain=('Efficiency Gain (%)', 'mean')
+    ).sort_values('Avg_Gain', ascending=False)
+    print(type_stats.to_string())
 
-    # --- PRINTING THE REPORT ---
-    print("==========================================")
-    print("      GLOBAL DEFENSIVE ANALYSIS REPORT    ")
-    print("==========================================")
-    print(f"Total Plays Analyzed:       {len(summary_df)}")
-    print(f"Total Real Pressure:        {total_real_ist:.2f}")
-    print(f"Total Sim Pressure:         {total_sim_ist:.2f}")
-    print(f"Total Pressure Prevented:   {total_pressure_prevented:.2f}")
-    print(f"---")
-    print(f"GLOBAL EFFICIENCY GAIN:     {global_efficiency:.2f}%")
-    print(f"---")
-    print(f"Avg Gain per Play:          {avg_gain:.2f}%")
-    print(f"Consistency (Std Dev):      {std_gain:.2f}%")
-    
-    print("\n==========================================")
-    print("         BREAKDOWN BY PLAY TYPE           ")
-    print("==========================================")
-    print(type_stats.to_string(index=False))
-    
-    print("\n==========================================")
-    print("  TOP 3 DEFENSIVE LAPSES (Real vs Sim)    ")
-    print("==========================================")
-    print(top_3_lapses.to_string(index=False))
-
+    # 4. Identifying the 'Gravity Lapses'
+    print("\n" + "="*42)
+    print("      TOP 3 DETECTED GRAVITY LAPSES")
+    print("="*42)
+    top_3 = summary_df.nlargest(3, 'Pressure Prevented')
+    print(top_3[['Play Index', 'Play Type', 'Efficiency Gain (%)']].to_string(index=False))
 
 # --- Add Play Types --- #
 def add_play_action(df, best_params):

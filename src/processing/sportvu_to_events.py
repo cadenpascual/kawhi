@@ -4,10 +4,8 @@ import pandas as pd
 from typing import Dict, Any, List, Tuple, Optional
 
 from src.utils.casting import safe_int, safe_float
-from src.tracking.possession import identify_possession
 from src.processing.pbp.context import pbp_context
 from src.processing.pbp.indexing import build_pbp_index
-from src.tracking.event_summaries import event_clock_span, first_ball_xy
 
 # RENAME THIS FUNCTION
 def parse_sportvu_kinematics(game_dict: Dict[str, Any]) -> List[Dict[str, Any]]:

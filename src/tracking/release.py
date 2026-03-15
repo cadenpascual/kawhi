@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Dict, Any, List, Tuple
 
 def find_release_frame_idx(
     event_frames,
@@ -116,3 +117,47 @@ def find_release_frame_idx(
         "shot_gc": shot_gc,
         "num_candidates": int(len(clocks)),
     }
+
+# =====================================================================
+# Kinematic Shot Detection
+# =====================================================================
+
+def locate_true_release_frame(
+    event_frames: List[Dict], 
+    pbp_frame_idx: int, 
+    fps: int = 25, 
+    search_window_sec: float = 4.0
+) -> int:
+    """
+    Backtracks from the delayed play-by-play frame to find the true geometric 
+    shot release by analyzing the ball's z-axis (height) ascent.
+    """
+    start_search = max(0, pbp_frame_idx - int(search_window_sec * fps))
+    
+    z_coords = []
+    for i in range(start_search, pbp_frame_idx + 1):
+        b_data = event_frames[i].get("ball")
+        if isinstance(b_data, dict):
+            z_coords.append(b_data.get("z", 0.0))
+        elif isinstance(b_data, list) and len(b_data) >= 3:
+            z_coords.append(b_data[2])
+        else:
+            z_coords.append(0.0)
+            
+    z_coords = np.array(z_coords)
+    
+    # If no clear shot arc exists (max height < 8 feet), apply a static 2-second offset
+    if len(z_coords) < 5 or np.max(z_coords) < 8.0:
+        return max(0, pbp_frame_idx - int(2.0 * fps))
+        
+    # Find the apex of the shot trajectory
+    apex_local_idx = np.argmax(z_coords)
+    
+    # Trace backward from the apex to find where the ball crossed ~7 feet 
+    # (average release point from a shooter's hands)
+    for j in range(apex_local_idx, -1, -1):
+        if z_coords[j] < 7.0:
+            return start_search + j
+            
+    # Fallback to 0.5 seconds before the apex if no clean crossing is found
+    return max(0, start_search + apex_local_idx - int(0.5 * fps))

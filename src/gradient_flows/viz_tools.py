@@ -95,22 +95,27 @@ def draw_plotly_court(fig, xref='x', yref='y', half_court=None):
     line_col = "#777777"
     three_r = 23.75
     
-    # Base shapes (full court perimeter)
-    shapes = [
-        dict(type="rect", x0=0, y0=0, x1=94, y1=50, line=dict(color=line_col, width=2), layer='below'),
-    ]
-
-    # Midcourt Line
-    shapes.append(dict(type="line", x0=47, y0=0, x1=47, y1=50, line=dict(color=line_col, width=2), layer='below'))
-
-    # Midcourt Circle
-    if half_court is None:
+    # Base shapes
+    shapes = []
+    
+    # Court Perimeter
+    if half_court == 'left':
+        shapes.append(dict(type="rect", x0=0, y0=0, x1=47, y1=50, line=dict(color=line_col, width=2), layer='below'))
+    elif half_court == 'right':
+        shapes.append(dict(type="rect", x0=47, y0=0, x1=94, y1=50, line=dict(color=line_col, width=2), layer='below'))
+    else:
+        shapes.append(dict(type="rect", x0=0, y0=0, x1=94, y1=50, line=dict(color=line_col, width=2), layer='below'))
+        # Midcourt Line
+        shapes.append(dict(type="line", x0=47, y0=0, x1=47, y1=50, line=dict(color=line_col, width=2), layer='below'))
+        # Midcourt Circle
         shapes.append(dict(type="circle", x0=41, y0=19, x1=53, y1=31, line=dict(color=line_col, width=2), layer='below'))
-    elif half_court == 'left':
-        # Left half of center circle (from 90 to 270 degrees)
+
+    # Midcourt detail for half-court
+    if half_court == 'left':
+        shapes.append(dict(type="line", x0=47, y0=0, x1=47, y1=50, line=dict(color=line_col, width=2), layer='below'))
         shapes.append(dict(type="path", path=ellipse_arc(47, 25, 6, 6, np.pi/2, 3*np.pi/2), line=dict(color=line_col, width=2), layer='below'))
     elif half_court == 'right':
-        # Right half of center circle (from -90 to 90 degrees)
+        shapes.append(dict(type="line", x0=47, y0=0, x1=47, y1=50, line=dict(color=line_col, width=2), layer='below'))
         shapes.append(dict(type="path", path=ellipse_arc(47, 25, 6, 6, -np.pi/2, np.pi/2), line=dict(color=line_col, width=2), layer='below'))
 
     # Left Side Features
@@ -145,15 +150,19 @@ def draw_plotly_court(fig, xref='x', yref='y', half_court=None):
 # --- Visualization Functions ---
 
 def create_interactive_plot(sim_traj, real_traj, ball_traj, offenders_traj, filename, half_court='left'):
+    sim_traj = jnp.round(sim_def_traj, 2)
+    real_traj = jnp.round(real_traj, 2)
+    ball_traj = jnp.round(ball_traj, 2)
+    offenders_traj = jnp.round(offenders_traj, 2)
     """Creates an interactive Plotly figure comparing real vs. simulated defense."""
     fig = make_subplots(rows=1, cols=2, subplot_titles=('Real Defense', 'Simulated (JKO)'))
 
     def add_traces(f, row, col, traj, name_prefix, showlegend=True):
-        fig.add_trace(go.Scatter(x=traj[f, :, 0], y=traj[f, :, 1], mode='markers', 
+        fig.add_trace(go.Scattergl(x=traj[f, :, 0], y=traj[f, :, 1], mode='markers', 
                                  marker=dict(color='blue', size=12, line=dict(width=1, color='white')), name=f'{name_prefix} Defenders', showlegend=showlegend), row=row, col=col)
-        fig.add_trace(go.Scatter(x=offenders_traj[f, :, 0], y=offenders_traj[f, :, 1], mode='markers', 
+        fig.add_trace(go.Scattergl(x=offenders_traj[f, :, 0], y=offenders_traj[f, :, 1], mode='markers', 
                                  marker=dict(color='red', size=12, line=dict(width=1, color='white')), name='Offenders', showlegend=showlegend and row==1 and col==1), row=row, col=col)
-        fig.add_trace(go.Scatter(x=[ball_traj[f, 0]], y=[ball_traj[f, 1]], mode='markers', 
+        fig.add_trace(go.Scattergl(x=[ball_traj[f, 0]], y=[ball_traj[f, 1]], mode='markers', 
                                  marker=dict(color='orange', size=10, symbol='star'), name='Ball', showlegend=showlegend and row==1 and col==1), row=row, col=col)
 
     add_traces(0, 1, 1, real_traj, 'Real')
@@ -182,7 +191,7 @@ def create_interactive_plot(sim_traj, real_traj, ball_traj, offenders_traj, file
             type="buttons",
             showactive=False,
             buttons=[
-                dict(label="Play", method="animate", args=[None, {"frame": {"duration": 40, "redraw": True}, "fromcurrent": True}]),
+                dict(label="Play", method="animate", args=[None, {"frame": {"duration": 40, "redraw": False}, "fromcurrent": True}]),
                 dict(label="Stop", method="animate", args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate", "transition": {"duration": 0}}])
             ]
         )],
@@ -198,15 +207,22 @@ def create_interactive_plot(sim_traj, real_traj, ball_traj, offenders_traj, file
     # Apply aspect ratio to BOTH subplots
     fig.update_xaxes(range=x_range, showgrid=False, zeroline=False, showticklabels=False)
     fig.update_yaxes(range=[0, 50], showgrid=False, zeroline=False, showticklabels=False, scaleanchor="x", scaleratio=1)
-    # Target second axis explicitly for safety in some plotly versions
-    fig.update_layout(yaxis2=dict(scaleanchor="x2", scaleratio=1))
+    fig.update_layout(yaxis2=dict(range=[0, 50], showgrid=False, zeroline=False, showticklabels=False, scaleanchor="x2", scaleratio=1))
     
-    fig.write_html(filename, include_plotlyjs='cdn', full_html=False)
+    fig.write_html(
+    filename, 
+    include_plotlyjs='cdn',  # This is the biggest size saver
+    full_html=False,         # Keeps it as a <div> rather than a full document
+    config={'responsive': True})
 
 def create_gradient_flow_plotly(sim_traj, ball_traj, offenders_traj, basket_pos, params, filename, half_court='left'):
     """Interactive Plotly version of the gradient flow animation."""
+    sim_traj = jnp.round(sim_traj, 2)
+    ball_traj = jnp.round(ball_traj, 2)
+    offenders_traj = jnp.round(offenders_traj, 2)
+
     x_min, x_max = (0, 47) if half_court == 'left' else ((47, 94) if half_court == 'right' else (0, 94))
-    nx, ny = 40, 20
+    nx, ny = 25, 12
     xx, yy = jnp.meshgrid(jnp.linspace(x_min, x_max, nx), jnp.linspace(0, 50, ny))
     grid_points = jnp.stack([xx.ravel(), yy.ravel()], axis=1)
 
@@ -217,7 +233,7 @@ def create_gradient_flow_plotly(sim_traj, ball_traj, offenders_traj, basket_pos,
         return vmap(energy_at_point)(grid_points).reshape(ny, nx)
 
     initial_z = get_z(0)
-    abs_max = float(jnp.max(jnp.abs(initial_z))) * 1.5
+    abs_max = float(jnp.max(jnp.abs(initial_z))) * 1.2
 
     fig = go.Figure(data=[
         go.Heatmap(x=np.linspace(x_min, x_max, nx), y=np.linspace(0, 50, ny), z=initial_z, 
@@ -229,7 +245,7 @@ def create_gradient_flow_plotly(sim_traj, ball_traj, offenders_traj, basket_pos,
     ])
 
     frames = []
-    step = 2
+    step = 5
     for k in range(0, len(sim_traj), step):
         zk = get_z(k)
         frames.append(go.Frame(data=[
@@ -247,7 +263,7 @@ def create_gradient_flow_plotly(sim_traj, ball_traj, offenders_traj, basket_pos,
             type="buttons",
             showactive=False,
             buttons=[
-                dict(label="Play", method="animate", args=[None, {"frame": {"duration": 40, "redraw": True}, "fromcurrent": True}]),
+                dict(label="Play", method="animate", args=[None, {"frame": {"duration": 40, "redraw": False}, "fromcurrent": True}]),
                 dict(label="Stop", method="animate", args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate", "transition": {"duration": 0}}])
             ]
         )],
@@ -264,50 +280,70 @@ def create_gradient_flow_plotly(sim_traj, ball_traj, offenders_traj, basket_pos,
     fig.update_xaxes(range=[x_min, x_max], showgrid=False, zeroline=False, showticklabels=False)
     fig.update_yaxes(range=[0, 50], showgrid=False, zeroline=False, showticklabels=False, scaleanchor="x", scaleratio=1)
     
-    fig.write_html(filename, include_plotlyjs='cdn', full_html=False)
+    fig.write_html(
+    filename, 
+    include_plotlyjs='cdn',  # This is the biggest size saver
+    full_html=False,         # Keeps it as a <div> rather than a full document
+    config={'responsive': True})
 
-def plot_potential_surface(defenders, offenders, ball, basket, params, filename, half_court='left'):
+import numpy as np
+# Assuming jax.numpy is imported as jnp
+
+def plot_potential_surface(defenders, offenders, ball, basket, params, filename, half_court='left', target_defender_idx=0):
     """Computes and plots the total_energy surface for a single defender using Plotly."""
+    defenders = jnp.round(defenders, 2)
+    offenders = jnp.round(offenders, 2)
+    ball = jnp.round(ball, 2)
+
+
+    # Poster Colors
+    C_OFF, C_SIM, C_BALL = '#C8102E', '#1D428A', '#ec7607'
+    
     x_min, x_max = (0, 47) if half_court == 'left' else ((47, 94) if half_court == 'right' else (0, 94))
-    nx, ny = 100, 50
+    nx, ny = 25, 12
     xx, yy = jnp.meshgrid(jnp.linspace(x_min, x_max, nx), jnp.linspace(0, 50, ny))
     grid_points = jnp.stack([xx.ravel(), yy.ravel()], axis=1)
 
-    fixed_defenders = defenders[1:]
+    # Dynamically remove the target defender so we can move them around the grid
+    fixed_defenders = jnp.delete(defenders, target_defender_idx, axis=0)
     
     def get_energy_at_point(point):
-        current_defenders = jnp.vstack([point, fixed_defenders])
+        # Insert the hypothetical point back into the correct lineup spot
+        current_defenders = jnp.insert(fixed_defenders, target_defender_idx, point, axis=0)
         energies = total_energy(current_defenders, offenders, ball, basket, params)
-        return energies[0]
+        return energies[target_defender_idx] # Get energy specific to this defender
 
     energies = vmap(get_energy_at_point)(grid_points)
-    zz = energies.reshape(ny, nx)
-    abs_max = float(jnp.max(jnp.abs(zz)))
+    zz = np.array(energies.reshape(ny, nx)) # Cast to NumPy for Plotly compatibility
+    abs_max = float(np.max(np.abs(zz)))
 
     fig = go.Figure(data=[
         go.Heatmap(x=np.linspace(x_min, x_max, nx), y=np.linspace(0, 50, ny), z=zz, 
                    colorscale='RdBu', reversescale=True, zmid=0, zmin=-abs_max, zmax=abs_max,
                    opacity=0.7, showscale=True, name='Potential Energy'),
-        go.Scatter(x=defenders[:, 0], y=defenders[:, 1], mode='markers', marker=dict(color='blue', size=12, line=dict(width=2, color='white')), name='Defenders'),
-        go.Scatter(x=offenders[:, 0], y=offenders[:, 1], mode='markers', marker=dict(color='red', size=12, line=dict(width=1, color='white')), name='Offenders'),
-        go.Scatter(x=[ball[0]], y=[ball[1]], mode='markers', marker=dict(color='orange', size=14, symbol='star', line=dict(width=1, color='black')), name='Ball')
+        go.Scattergl(x=defenders[:, 0], y=defenders[:, 1], mode='markers', 
+                   marker=dict(color=C_SIM, size=14, line=dict(width=2, color='white')), name='Defenders'),
+        go.Scattergl(x=offenders[:, 0], y=offenders[:, 1], mode='markers', 
+                   marker=dict(color=C_OFF, size=14, line=dict(width=1, color='white')), name='Offenders'),
+        go.Scattergl(x=[ball[0]], y=[ball[1]], mode='markers', 
+                   marker=dict(color=C_BALL, size=16, symbol='star', line=dict(width=1, color='black')), name='Ball')
     ])
 
     draw_plotly_court(fig, xref='x', yref='y', half_court=half_court)
 
     fig.update_layout(
-        title="Defensive Potential Surface",
-        height=600,
-        margin=dict(l=20, r=20, t=60, b=80),
-        plot_bgcolor='white'
+        title="Defensive Potential Surface", height=600,
+        margin=dict(l=20, r=20, t=60, b=80), plot_bgcolor='white'
     )
     fig.update_xaxes(range=[x_min, x_max], showgrid=False, zeroline=False, showticklabels=False)
     fig.update_yaxes(range=[0, 50], showgrid=False, zeroline=False, showticklabels=False, scaleanchor="x", scaleratio=1)
     
-    if filename.endswith(".html"):
-        fig.write_html(filename, include_plotlyjs='cdn', full_html=False)
-    else:
-        fig.write_image(filename)
+    fig.write_html(
+    filename, 
+    include_plotlyjs='cdn',  # This is the biggest size saver
+    full_html=False,         # Keeps it as a <div> rather than a full document
+    config={'responsive': True})
+
 
 def save_simulation_gif(sim_traj, real_traj, ball_traj, offenders_traj, filename, half_court='left'):
     """Saves side-by-side simulation GIF using Plotly for high-quality frames."""
@@ -336,7 +372,7 @@ def save_simulation_gif(sim_traj, real_traj, ball_traj, offenders_traj, filename
         fig.update_layout(width=1000, height=400, showlegend=False, margin=dict(l=20, r=20, t=40, b=20), plot_bgcolor='white')
         fig.update_xaxes(range=[x_min, x_max], visible=False)
         fig.update_yaxes(range=[0, 50], visible=False, scaleanchor="x", scaleratio=1)
-        fig.update_layout(yaxis2=dict(scaleanchor="x2", scaleratio=1))
+        fig.update_layout(yaxis2=dict(range=[0, 50], scaleanchor="x2", scaleratio=1, visible=False))
         
         img_bytes = fig.to_image(format="png")
         frames.append(Image.open(io.BytesIO(img_bytes)))
@@ -346,10 +382,14 @@ def save_simulation_gif(sim_traj, real_traj, ball_traj, offenders_traj, filename
 
 def save_gradient_flow_gif(sim_traj, ball_traj, offenders_traj, basket_pos, params, filename, half_court='left'):
     """Saves gradient flow GIF using Plotly for high-quality frames."""
+    sim_traj = jnp.round(sim_traj, 2)
+    ball_traj = jnp.round(ball_traj, 2)
+    offenders_traj = jnp.round(offenders_traj, 2)
+    
     print(f"Generating {filename}...")
     frames = []
     x_min, x_max = (0, 47) if half_court == 'left' else ((47, 94) if half_court == 'right' else (0, 94))
-    nx, ny = 40, 20
+    nx, ny = 25, 12
     xx, yy = jnp.meshgrid(jnp.linspace(x_min, x_max, nx), jnp.linspace(0, 50, ny))
     grid_points = jnp.stack([xx.ravel(), yy.ravel()], axis=1)
 
@@ -391,12 +431,13 @@ def plot_speed_analysis(sim_traj, real_traj, filename):
     axes[0].axhline(y=15, color='r', linestyle='--'); axes[1].axhline(y=15, color='r', linestyle='--')
     plt.savefig(filename); plt.close()
 
+
 if __name__ == '__main__':
-    os.makedirs('assets', exist_ok=True)
+    os.makedirs('assets/visualizations', exist_ok=True)
     os.makedirs('_includes/visualizations', exist_ok=True)
     
-    DATA_FILE = "0021500492.json"
-    STUDY_NAME = "nba-defensive-optimization"
+    DATA_FILE = "data/0021500622.json"
+    STUDY_NAME = "nba-defensive-optimization-v2"
     STORAGE_NAME = f"sqlite:///{STUDY_NAME}.db"
     solver_params = {
         **default_params,
@@ -424,22 +465,16 @@ if __name__ == '__main__':
     print("Running simulation...")
     sim_def_traj = run_simulation(real_def_traj[0], ball_traj, off_traj, jnp.array([5.25, 25.0]), solver_params, jko_num_steps=15)
 
-    print("Saving assets/nba_simulation_viz.gif (25 FPS, side-by-side)...")
-    save_simulation_gif(sim_def_traj, real_def_traj, ball_traj, off_traj, 'assets/nba_simulation_viz.gif', half_court='left')
-    
-    print("Saving assets/gradient_flow.gif (25 FPS)...")
-    save_gradient_flow_gif(sim_def_traj, ball_traj, off_traj, jnp.array([5.25, 25.0]), solver_params, 'assets/gradient_flow.gif', half_court='left')
+    print("Saving assets/visualizations/defense_rotation_plot.html...")
+    create_interactive_plot(sim_def_traj, real_def_traj, ball_traj, off_traj, 'website/assets/visualizations/defense_rotation_plot_2.html', half_court='left')
 
-    print("Saving _includes/visualizations/defense_rotation_plot.html...")
-    create_interactive_plot(sim_def_traj, real_def_traj, ball_traj, off_traj, '_includes/visualizations/defense_rotation_plot.html', half_court='left')
-
-    print("Saving _includes/visualizations/gradient_flow_interactive.html...")
-    create_gradient_flow_plotly(sim_def_traj, ball_traj, off_traj, jnp.array([5.25, 25.0]), solver_params, '_includes/visualizations/gradient_flow_interactive.html', half_court='left')
+    print("Saving assets/visualizations/gradient_flow_interactive.html...")
+    create_gradient_flow_plotly(sim_def_traj, ball_traj, off_traj, jnp.array([5.25, 25.0]), solver_params, 'website/assets/visualizations/gradient_flow_interactive_2.html', half_court='left')
 
     print("Saving assets/speed_analysis.png...")
     plot_speed_analysis(sim_def_traj, real_def_traj, 'assets/speed_analysis.png')
 
-    print("Saving assets/potential_surface.png...")
-    plot_potential_surface(sim_def_traj[0], off_traj[0], ball_traj[0], jnp.array([5.25, 25.0]), solver_params, 'assets/potential_surface.png', half_court='left')
+    print("Saving assets/visualizations/potential_surface.html...")
+    plot_potential_surface(sim_def_traj[0], off_traj[0], ball_traj[0], jnp.array([5.25, 25.0]), solver_params, 'website/assets/visualizations/potential_surface_2.html', half_court='left')
     
     print("Done.")

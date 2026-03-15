@@ -32,7 +32,18 @@ params = {
     # IST Params
     'ist_q_exp': jnp.array(2.16),
     'ist_o_exp': jnp.array(1.03),
-}
+
+    # additional
+    'jko_lambda': 0.5,
+    'sinkhorn_epsilon': 0.05,
+    'velocity_cap': 0.8,
+    'soft_velocity_cap': 0.6,
+    'court_dims': [[0.0, 94.0], [0.0, 50.0]],
+    'max_gradient_norm': 1.0,
+    'acceleration_penalty_weight': 2.0,
+    'velocity_penalty_weight': 1.0,
+    }
+
 
 # --- Helper Functions ---
 
@@ -155,14 +166,14 @@ def _total_energy_per_defender(current_defender_pos, all_defenders_pos, offender
 
     # This prevents the 'pushed out' problem by pulling rogue players back to the group
     team_centroid = jnp.mean(all_defenders_pos, axis=0)
-    dist_to_centroid = jnp.linalg.norm(current_defender_pos - team_centroid)
+    dist_to_centroid = jnp.sqrt(jnp.sum(jnp.square(current_defender_pos - team_centroid)) + 1e-6)
     
     # Linear pull: 0 if inside the radius, grows linearly if they drift too far
     E_cohesion = params['cohesion_weight'] * jnp.maximum(0, dist_to_centroid - params['formation_radius'])
 
     def _calculate_ball_pressure(defender_pos):
         dist_sq_ball = jnp.sum((defender_pos - ball_pos)**2)
-        dist_to_ball = jnp.sqrt(dist_sq_ball)
+        dist_to_ball = jnp.sqrt(dist_sq_ball + 1e-6)
         blend_factor = jax.nn.sigmoid(-params['blending_k'] * (dist_to_ball - params['blending_radius']))
         
         E_local = -params['attraction_weight'] * jnp.exp(-dist_sq_ball / (2 * params['sigma_wide']**2))
