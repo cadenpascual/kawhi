@@ -98,3 +98,4 @@ def plot_release_frame_exemplar(row: pd.Series, fps: int = 25, save_path: str = 
     if save_path:
         plt.savefig(save_path, bbox_inches='tight', dpi=300)
     plt.show()
+

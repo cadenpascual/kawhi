@@ -450,7 +450,6 @@ def plot_ist_optimization_map(final_df, filename="ist_optimization_heatmap.png")
     plt.axis('off')
     
     plt.tight_layout()
-    plt.savefig(filename, facecolor=fig.get_facecolor())
     plt.show()
 
 def plot_triple_ist_shift(final_df, filename="ist_triple_shift_dashboard.png"):

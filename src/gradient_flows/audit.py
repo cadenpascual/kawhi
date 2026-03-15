@@ -4,9 +4,69 @@ import numpy as np
 from ipywidgets import interact, IntSlider, Dropdown
 import ipywidgets as widgets
 from IPython.display import display, clear_output
+import optuna
+import optuna.visualization as vis
+import os
+
 
 from src.gradient_flows.utils import extract_trajectories_from_row
 from src.gradient_flows.potentials import params as default_params
+
+def generate_optimization_viz(db_path, study_name, target_names=None):
+    if target_names is None:
+        target_names = ["IST Threat", "Smoothness"]
+
+    try:
+        study = optuna.load_study(study_name=study_name, storage=db_path)
+        
+        # 1. Use the base Optuna viz
+        fig = vis.plot_pareto_front(
+            study, 
+            target_names=target_names,
+            include_dominated_trials=True
+        )
+
+        # 2. FORCE LIGHT MODE & VISIBILITY
+        fig.update_layout(
+            template="plotly_white",        # This kills the dark background immediately
+            title={'text': f"OPTIMIZATION TRIALS: {study_name.upper()}", 'x': 0.5},
+            paper_bgcolor='white',          # Clean white outer border
+            plot_bgcolor='#F8F9FA',         # Very light grey for the grid area (depth)
+            
+            # Make the text pop (Naval Blue)
+            font=dict(family="Arial Black", size=14, color='#1D428A'),
+            
+            # Grid line visibility
+            xaxis=dict(showgrid=True, gridcolor='#DDDDDD', zerolinecolor='black'),
+            yaxis=dict(showgrid=True, gridcolor='#DDDDDD', zerolinecolor='black'),
+            
+            # Size for demo
+            width=900,
+            height=600
+        )
+        
+        # 3. Make the Pareto points larger and easier to see
+        # This targets the scatter traces
+        fig.update_traces(marker=dict(size=12, line=dict(width=2, color='DarkSlateGrey')))
+        
+        return fig
+
+    except Exception as e:
+        print(f"Error generating Pareto Front: {e}")
+        return None
+
+# --- Usage Example ---
+DB_URL = "sqlite:///../data/demo/processed/demo-ist-tuning.db"
+TRAJ_FILE = "../data/demo/processed/demo_traj.parquet"
+
+pareto_fig = generate_optimization_viz(DB_URL, "demo-ist-tuning", TRAJ_FILE)
+
+if pareto_fig:
+    # Save as HTML so it's interactive for the demo
+    pareto_fig.write_html("pareto_optimization_results.html")
+    pareto_fig.show()
+
+
 
 def get_pareto_trials(db_path, study_name):
     """
