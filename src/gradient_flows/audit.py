@@ -55,18 +55,6 @@ def generate_optimization_viz(db_path, study_name, target_names=None):
         print(f"Error generating Pareto Front: {e}")
         return None
 
-# --- Usage Example ---
-DB_URL = "sqlite:///../data/demo/processed/demo-ist-tuning.db"
-TRAJ_FILE = "../data/demo/processed/demo_traj.parquet"
-
-pareto_fig = generate_optimization_viz(DB_URL, "demo-ist-tuning", TRAJ_FILE)
-
-if pareto_fig:
-    # Save as HTML so it's interactive for the demo
-    pareto_fig.write_html("pareto_optimization_results.html")
-    pareto_fig.show()
-
-
 
 def get_pareto_trials(db_path, study_name):
     """

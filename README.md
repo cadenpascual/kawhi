@@ -99,7 +99,7 @@ python -m src.pipelines.compute_real_traj
 
 **Step 3: Full Season Optimization**
 ```bash
-python src/gradient_flows/optimize.py --trials 100
+python -m src.gradient_flows.optimize --trials 100
 ```
 
 **Step 4: Full Season Simulation Generation**
