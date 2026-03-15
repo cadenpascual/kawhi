@@ -247,7 +247,7 @@ def animate_comparison_play(off_traj, real_def_traj, sim_def_traj, ball_traj, is
         )]
     )
     
-    return fig.show(renderer="browser")
+    return fig
 
 def get_base64_image(pid, folder="../images", border_color="#1D428A"):
     path = os.path.join(folder, f"{pid}.png")
@@ -658,13 +658,17 @@ def animate_triple_comparison(sim_no_ist_traj, sim_ist_traj, real_def_traj,
     
     return fig.show(renderer="browser")
 
-def animate_side_by_side_courts(sim_ist_traj, real_def_traj, ist_sim, ist_real, 
-                                off_traj, ball_traj, off_ids, 
-                                half_court='left', use_images=False):
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+def animate_side_by_side_courts(off_traj, real_def_traj, sim_def_traj, 
+                                ball_traj, ist_real, ist_sim, off_ids=[], 
+                                half_court='left'):
     # --- 1. SHAPE SAFETY ---
     off_traj = np.array(off_traj).reshape(-1, 5, 2)
     real_def_traj = np.array(real_def_traj).reshape(-1, 5, 2)
-    sim_ist_traj = np.array(sim_ist_traj).reshape(-1, 5, 2)
+    sim_def_traj = np.array(sim_def_traj).reshape(-1, 5, 2)
     ball_traj = np.array(ball_traj).reshape(-1, 2)
     ist_real = np.array(ist_real).reshape(-1, 5)
     ist_sim = np.array(ist_sim).reshape(-1, 5)
@@ -672,6 +676,7 @@ def animate_side_by_side_courts(sim_ist_traj, real_def_traj, ist_sim, ist_real,
     num_frames = off_traj.shape[0]
     C_OFF, C_REAL, C_SIM, C_BALL = '#C8102E', '#888888', '#1D428A', '#ec7607'
     
+    # Half-court logic
     x_range = [-2, 49] if half_court == 'left' else [45, 96]
     y_range = [-2, 54]
 
@@ -683,71 +688,70 @@ def animate_side_by_side_courts(sim_ist_traj, real_def_traj, ist_sim, ist_real,
             labels.append(f"<span style='{halo} color: {color_hex};'><b>{v:.2f}</b></span>")
         return labels
 
-    # --- THE "SQUISH" FIX ---
-    # horizontal_spacing set to nearly zero (0.005)
+    # horizontal_spacing at 0.04 provides a clean gap for the 1000px width
     fig = make_subplots(
         rows=1, cols=2, column_widths=[0.5, 0.5], 
         subplot_titles=("Real NBA Defense", "Optimized JKO Defense"),
-        horizontal_spacing=0.005 # Minimal gap
+        horizontal_spacing=0.04 
     )
 
-    fancy_font = dict(family="Arial Black, sans-serif", size=11)
-    text_offset = 2.8 
+    fancy_font = dict(family="Arial Black, sans-serif", size=10)
+    text_offset = 2.5 
 
-    # Traces
-    for col, traj, ist_vals, name, def_color in zip([1, 2], [real_def_traj, sim_ist_traj], [ist_real, ist_sim], 
+    # --- TRACE SETUP (Order: Offense -> Defense -> Labels -> Ball) ---
+    for col, traj, ist_vals, name, def_color in zip([1, 2], [real_def_traj, sim_def_traj], [ist_real, ist_sim], 
                                                      ['Real Defense', 'Optimized Defense'], [C_REAL, C_SIM]):
-        fig.add_trace(go.Scatter(x=off_traj[0,:,0], y=off_traj[0,:,1], mode='markers', marker=dict(color=C_OFF, size=13, line=dict(width=1, color='white')), showlegend=False), row=1, col=col)
-        fig.add_trace(go.Scatter(x=[ball_traj[0,0]], y=[ball_traj[0,1]], mode='markers', marker=dict(color=C_BALL, size=9), showlegend=False), row=1, col=col)
-        fig.add_trace(go.Scatter(x=traj[0,:,0], y=traj[0,:,1], mode='markers', marker=dict(color=def_color, size=13, line=dict(width=2, color=C_SIM if col==1 else 'white')), name=name), row=1, col=col)
+        # 1. Offense
+        fig.add_trace(go.Scatter(x=off_traj[0,:,0], y=off_traj[0,:,1], mode='markers', marker=dict(color=C_OFF, size=12, line=dict(width=1, color='white')), showlegend=False), row=1, col=col)
+        # 2. Defense
+        fig.add_trace(go.Scatter(x=traj[0,:,0], y=traj[0,:,1], mode='markers', marker=dict(color=def_color, size=12, line=dict(width=2, color='white')), name=name), row=1, col=col)
+        # 3. Threat Labels
         fig.add_trace(go.Scatter(x=off_traj[0,:,0], y=off_traj[0,:,1] + text_offset, mode='text', text=get_dynamic_labels(ist_vals[0]), textfont=fancy_font, showlegend=False), row=1, col=col)
+        # 4. Ball (Added last so it's on top)
+        fig.add_trace(go.Scatter(x=[ball_traj[0,0]], y=[ball_traj[0,1]], mode='markers', marker=dict(color=C_BALL, size=9, line=dict(width=1, color='black')), showlegend=False), row=1, col=col)
 
-    # Animation Frames
+    # --- ANIMATION FRAMES ---
     frames = []
     for f in range(num_frames):
         frames.append(go.Frame(data=[
-            go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1]), go.Scatter(x=[ball_traj[f,0]], y=[ball_traj[f,1]]), 
-            go.Scatter(x=real_def_traj[f,:,0], y=real_def_traj[f,:,1]), go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1] + text_offset, text=get_dynamic_labels(ist_real[f])), 
-            go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1]), go.Scatter(x=[ball_traj[f,0]], y=[ball_traj[f,1]]), 
-            go.Scatter(x=sim_ist_traj[f,:,0], y=sim_ist_traj[f,:,1]), go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1] + text_offset, text=get_dynamic_labels(ist_sim[f])) 
+            # Left Court (Traces 0-3)
+            go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1]), 
+            go.Scatter(x=real_def_traj[f,:,0], y=real_def_traj[f,:,1]), 
+            go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1] + text_offset, text=get_dynamic_labels(ist_real[f])), 
+            go.Scatter(x=[ball_traj[f,0]], y=[ball_traj[f,1]]), 
+            # Right Court (Traces 4-7)
+            go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1]), 
+            go.Scatter(x=sim_def_traj[f,:,0], y=sim_def_traj[f,:,1]), 
+            go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1] + text_offset, text=get_dynamic_labels(ist_sim[f])),
+            go.Scatter(x=[ball_traj[f,0]], y=[ball_traj[f,1]])
         ], name=str(f), traces=[0, 1, 2, 3, 4, 5, 6, 7]))
     fig.frames = frames
 
     axis_config = dict(range=x_range, showgrid=False, zeroline=False, showticklabels=False, fixedrange=True, constrain='domain')
-    yaxis_config = dict(range=y_range, scaleanchor="x", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False, fixedrange=True, constrain='domain')
+    yaxis_config = dict(range=y_range, scaleanchor="x", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False, fixedrange=True)
 
+    # --- THE "GOLDILOCKS" LAYOUT ---
     fig.update_layout(
-        title=dict(text="Side-by-Side Defense Comparison", x=0.5, xanchor='center', font=dict(size=22, family="Arial Black")),
+        title=dict(text="Side-by-Side Defense Comparison", x=0.5, xanchor='center', font=dict(size=18, family="Arial Black")),
         shapes=draw_plotly_court(xref="x", yref="y") + draw_plotly_court(xref="x2", yref="y2"),
-        template="plotly_white", width=1400, height=750, 
-        margin=dict(l=10, r=10, t=100, b=150), # Tighter left/right margins
+        template="plotly_white", 
+        
+        # --- FIXED SIZE TO FIT NOTEBOOK CONTAINER ---
+        width=1000,   # Standard width for Jupyter cells
+        height=550,   # Proportional height for half-courts
+        margin=dict(l=20, r=20, t=80, b=120),
+        
         xaxis=axis_config, yaxis=yaxis_config,
-        xaxis2=axis_config, yaxis2=dict(range=y_range, scaleanchor="x2", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False, fixedrange=True, constrain='domain'),
+        xaxis2=axis_config, yaxis2=dict(range=y_range, scaleanchor="x2", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
         
-        # Centered Legend
-        legend=dict(orientation="h", yanchor="top", y=-0.05, xanchor="center", x=0.5, bgcolor="white", bordercolor="#1D428A", borderwidth=1),
+        legend=dict(orientation="h", yanchor="top", y=-0.02, xanchor="center", x=0.5),
         
-        # Centered Play Buttons
-        updatemenus=[dict(type="buttons", x=0.5, y=-0.16, xanchor="center", yanchor="top", direction="right",
-                buttons=[dict(label="▶ Play", method="animate", args=[None, {"frame": {"duration": 40, "redraw": True}, "fromcurrent": True}]),
+        updatemenus=[dict(type="buttons", x=0.5, y=-0.12, xanchor="center", yanchor="top", direction="right",
+                buttons=[dict(label="▶ Play", method="animate", args=[None, {"frame": {"duration": 40, "redraw": False}, "fromcurrent": True}]),
                          dict(label="⏸ Pause", method="animate", args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}])])],
         
-        # Smaller (60%) Centered Slider
-        sliders=[dict(active=0, x=0.5, y=-0.26, len=0.6, xanchor="center", yanchor="top",
-            steps=[dict(method='animate', args=[[str(k)], dict(mode='immediate', frame=dict(duration=0, redraw=True))]) for k in range(num_frames)])]
-    )
-
-    fig.update_layout(
-        title=dict(text="Side-by-Side Defense Comparison", x=0.5, xanchor='center'),
-        width=None, # Fixed width to prevent overflow
-        height=650, 
-        autosize=True,
-        margin=dict(l=10, r=10, t=80, b=150),
-        xaxis=dict(range=[-2, 49], constrain='domain'),
-        xaxis2=dict(range=[-2, 49], constrain='domain'),
-        # Legend & Controls centered and smaller
-        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.05),
-        sliders=[dict(len=0.6, x=0.5, xanchor="center", y=-0.25)]
+        sliders=[dict(active=0, x=0.5, y=-0.22, len=0.5, xanchor="center", yanchor="top",
+            steps=[dict(method='animate', args=[[str(k)], dict(mode='immediate', frame=dict(duration=0, redraw=False))]) for k in range(num_frames)])]
     )
     
     return fig

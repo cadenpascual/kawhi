@@ -111,6 +111,7 @@ def objective(trial, train_data, base_params):
     return ist_loss, smooth_loss
 
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Stage 2 JKO Optimization (Threat Tuning)")
     parser.add_argument("--demo", action="store_true", help="Run a fast demo on a controlled section of possessions")
@@ -222,4 +223,3 @@ if __name__ == "__main__":
         fig.show()
     except ImportError:
         pass
-    

@@ -34,6 +34,7 @@ params = {
     'ist_o_exp': jnp.array(1.03),
 
     # additional
+    'learning_rate': 0.1,
     'jko_lambda': 0.5,
     'sinkhorn_epsilon': 0.05,
     'velocity_cap': 0.8,
