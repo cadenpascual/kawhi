@@ -55,7 +55,7 @@ To evaluate the Wasserstein physics engine and feature pipeline without processi
 **Step 1: Compute Player Spatial Maps**
 Generates foundational xPPS (Expected Points Per Shot) maps for offensive players.
 ```bash
-python -m src.pipelines.compute_player_maps --demo
+python -m src.pipelines.compute_player_maps
 ```
 > **🔍 Verification:** Open **`00_Quickstart_Demo.ipynb`** to verify that the spatial maps for key players (e.g., Stephen Curry, LeBron James) have loaded correctly.
 
