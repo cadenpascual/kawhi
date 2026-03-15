@@ -59,7 +59,7 @@ python -m src.pipelines.compute_player_maps
 **Step 2: Compute Trajectories & Features**
 Parses the compressed SportVU tracking data, synchronizes it with play-by-play logs, and extracts the tracking trajectories of all 10 players.
 ```bash
-python -m src.pipelines.compute_traj --demo
+python -m src.pipelines.compute_real_traj --demo
 ```
 
 **Step 3: JKO Defensive Optimization (Threat Tuning)**
@@ -85,7 +85,7 @@ python -m src.pipelines.compute_player_maps
 **Step 2: Compute Full Trajectories**
 *(Note: Depending on your CPU cores, this multiprocessing step takes roughly 1-2 hours).*
 ```bash
-python -m src.pipelines.compute_traj
+python -m src.pipelines.compute_real_traj
 ```
 
 **Step 3: Full Threat Optimization**

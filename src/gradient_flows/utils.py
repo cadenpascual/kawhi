@@ -33,53 +33,71 @@ def smooth_trajectory(traj, alpha=0.3):
 
 # --- Data Extraction --- #
 
-def extract_trajectories_from_row(row, solver_params):
-    # 1. Extract Ball Data -> Shape: (num_frames, 2)
+def extract_trajectories_from_row(row, solver_params, pad_for_bulk=True):
+    """Extracts raw data, pads to fixed length for JAX, and runs the JKO simulations."""
     ball_traj = jnp.stack([jnp.array(row['ball_y_traj']) + 5.25, 
                            jnp.array(row['ball_x_traj']) + 25.0], axis=1)
     
-    # 2. Extract Player Data
     off_list, q_list, def_list, off_ids = [], [], [], []
     for i in range(1, 6):
-        # Offense: (num_frames, 2) per player
         off_list.append(jnp.stack([jnp.array(row[f'off{i}_y_traj']) + 5.25, 
                                    jnp.array(row[f'off{i}_x_traj']) + 25.0], axis=1))
-        
-        # Q-values: (num_frames,) per player
         q_list.append(jnp.array(row[f'off{i}_q_traj']))
-        
-        # Defense: (num_frames, 2) per player
         def_list.append(jnp.stack([jnp.array(row[f'def{i}_y_traj']) + 5.25, 
                                    jnp.array(row[f'def{i}_x_traj']) + 25.0], axis=1))
-        
         off_ids.append(jnp.array(row[f'off{i}_pid']))
         
-    # 3. Stack into 3D Arrays -> Shape: (num_frames, 5, 2)
     off_traj = jnp.stack(off_list, axis=1) 
     q_traj = jnp.stack(q_list, axis=1)     
     real_def_traj = jnp.stack(def_list, axis=1)
 
-    # 4. Compute Weights
-    # ball_traj[:, None, :] broadcasts to (num_frames, 1, 2) for distance calculation
+    shot_frame = int(row['local_release_idx'])
+
+    # -- STRICT PADDING FOR JAX COMPILATION CACHING --
+    if pad_for_bulk:
+        MAX_FRAMES = 75
+        cutoff_idx = shot_frame  
+        
+        ball_traj = ball_traj[:cutoff_idx]
+        off_traj = off_traj[:cutoff_idx]
+        q_traj = q_traj[:cutoff_idx]
+        real_def_traj = real_def_traj[:cutoff_idx]
+        
+        current_len = ball_traj.shape[0]
+        
+        if current_len < MAX_FRAMES:
+            pad_len = MAX_FRAMES - current_len
+            ball_traj = jnp.pad(ball_traj, ((0, pad_len), (0, 0)), mode='edge')
+            off_traj = jnp.pad(off_traj, ((0, pad_len), (0, 0), (0, 0)), mode='edge')
+            q_traj = jnp.pad(q_traj, ((0, pad_len), (0, 0)), mode='edge')
+            real_def_traj = jnp.pad(real_def_traj, ((0, pad_len), (0, 0), (0, 0)), mode='edge')
+            actual_shot_frame = current_len 
+        else:
+            ball_traj = ball_traj[:MAX_FRAMES]
+            off_traj = off_traj[:MAX_FRAMES]
+            q_traj = q_traj[:MAX_FRAMES]
+            real_def_traj = real_def_traj[:MAX_FRAMES]
+            actual_shot_frame = MAX_FRAMES
+            
+    else:
+        actual_shot_frame = shot_frame 
+
+    # -- Weights Calculation --
     ball_dist = jnp.linalg.norm(off_traj - ball_traj[:, None, :], axis=2)
     b_traj = 0.4 + 0.6 * (1.0 / (1.0 + jnp.exp(0.3 * (ball_dist - 18.0))))
-    
     sim_weights = jnp.maximum((q_traj ** solver_params.get('ist_q_exp', 1.0)) * b_traj, 0.35)  
-    
-    # 5. Hoop Position
     basket_pos = jnp.array([5.25, 25.0]) if jnp.mean(real_def_traj[0, :, 0]) < 47.0 else jnp.array([88.75, 25.0])
         
-    # 6. Run Simulation
+    # -- Run Simulations --
     params_no_ist = solver_params.copy()
     params_no_ist['ist_weight'] = 0.0
     raw_sim_traj = run_simulation(real_def_traj[0], ball_traj, off_traj, q_traj, basket_pos, params_no_ist, 20)
     sim_def_no_ist_traj = smooth_trajectory(raw_sim_traj[:len(off_traj)])
 
     raw_sim_ist_traj = run_simulation(real_def_traj[0], ball_traj, off_traj, q_traj, basket_pos, solver_params, 20)
-    sim_def_ist_traj = smooth_trajectory(raw_sim_ist_traj[:len(off_traj)]) # Match lengths
+    sim_def_ist_traj = smooth_trajectory(raw_sim_ist_traj[:len(off_traj)]) 
    
-
-    # 7. Display IST Calculation 
+    # -- IST Distances --
     off_exp = off_traj[:, :, None, :]
     sim_no_ist_dist = jnp.min(jnp.linalg.norm(off_exp - sim_def_no_ist_traj[:, None, :, :], axis=-1), axis=2)
     sim_ist_dist = jnp.min(jnp.linalg.norm(off_exp - sim_def_ist_traj[:, None, :, :], axis=-1), axis=2)
@@ -90,13 +108,19 @@ def extract_trajectories_from_row(row, solver_params):
     weights_sim_ist = sim_weights * (jnp.clip(sim_ist_dist / 6.0, 0.5, 1.5) ** o_exp)
     weights_real = sim_weights * (jnp.clip(real_dist / 6.0, 0.5, 1.5) ** o_exp)
 
-    # 8. Cutoff IST Calculation at Shot Frame
-    shot_frame = row['local_release_idx']
-    weights_sim_no_ist = weights_sim_no_ist.at[shot_frame+10:].set(0.0)
-    weights_sim_ist = weights_sim_ist.at[shot_frame+10:].set(0.0)
-    weights_real = weights_real.at[shot_frame+10:].set(0.0)
+    # -- Zero-Out Post-Shot Padding --
+    if pad_for_bulk:
+        weights_sim_no_ist = weights_sim_no_ist.at[actual_shot_frame:].set(0.0)
+        weights_sim_ist = weights_sim_ist.at[actual_shot_frame:].set(0.0)
+        weights_real = weights_real.at[actual_shot_frame:].set(0.0)
+    else:
+        weights_sim_no_ist = weights_sim_no_ist.at[shot_frame+10:].set(0.0)
+        weights_sim_ist = weights_sim_ist.at[shot_frame+10:].set(0.0)
+        weights_real = weights_real.at[shot_frame+10:].set(0.0)
 
-    return sim_def_no_ist_traj, sim_def_ist_traj, real_def_traj, weights_sim_no_ist, weights_sim_ist, weights_real, off_traj, ball_traj, basket_pos, off_ids, shot_frame
+    return (sim_def_no_ist_traj, sim_def_ist_traj, real_def_traj, 
+            weights_sim_no_ist, weights_sim_ist, weights_real, 
+            off_traj, ball_traj, basket_pos, off_ids, actual_shot_frame)
 
 def prepare_play_data(row):
     """Extracts and slices data specifically up to the local_release_idx."""

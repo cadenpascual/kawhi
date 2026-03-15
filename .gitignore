@@ -212,4 +212,6 @@ __marimo__/
 # data is too large to add
 data/processed/tracking
 data/raw/tracking
-data/demo
+data/demo/final
+data/demo/processed
+data/raw/demo_shots.parquet

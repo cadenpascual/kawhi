@@ -20,8 +20,135 @@ import os
 from .potentials import total_energy, _calculate_ist_penalty
 from src.gradient_flows.court import draw_court_matplotlib, draw_plotly_court
 
+import numpy as np
+
+import numpy as np
+
+def extract_plot_trajectories(row):
+    """
+    Takes a single row from the tracking dataframe and stacks the individual 
+    player columns into 3D numpy arrays for Plotly animations.
+    Applies the spatial offsets (+5.25, +25.0) and swaps X/Y for court alignment.
+    """
+    # 1. Extract Ball -> Shape: (num_frames, 2)
+    # Note the order: Y first (with +5.25), then X (with +25.0)
+    ball_traj = np.column_stack((
+        np.array(row['ball_y_traj']) + 5.25, 
+        np.array(row['ball_x_traj']) + 25.0
+    ))
+    
+    # 2. Extract Offense -> Shape: (num_frames, 5, 2)
+    off_list = []
+    for i in range(1, 6):
+        off_player = np.column_stack((
+            np.array(row[f'off{i}_y_traj']) + 5.25, 
+            np.array(row[f'off{i}_x_traj']) + 25.0
+        ))
+        off_list.append(off_player)
+    off_traj = np.stack(off_list, axis=1)
+    
+    # 3. Extract Real Defense -> Shape: (num_frames, 5, 2)
+    def_list = []
+    for i in range(1, 6):
+        def_player = np.column_stack((
+            np.array(row[f'def{i}_y_traj']) + 5.25, 
+            np.array(row[f'def{i}_x_traj']) + 25.0
+        ))
+        def_list.append(def_player)
+    def_traj = np.stack(def_list, axis=1)
+    
+    return off_traj, def_traj, ball_traj
+
 
 # --- Animation Functions --- #
+def animate_standard_play(off_traj, def_traj, ball_traj):
+    """
+    Animates a single standard play showing offense, defense, and the ball.
+    """
+    num_frames = off_traj.shape[0]
+
+    fig = go.Figure()
+
+    # --- Initial Frame Setup ---
+    # Trace 0: Defense
+    fig.add_trace(go.Scatter(
+        x=def_traj[0,:,0], y=def_traj[0,:,1], mode='markers', 
+        marker=dict(color='blue', size=14), name='Defense'
+    ))
+    
+    # Trace 1: Offense
+    fig.add_trace(go.Scatter(
+        x=off_traj[0,:,0], y=off_traj[0,:,1], mode='markers', 
+        marker=dict(color='red', size=14), name='Offense'
+    ))
+    
+    # Trace 2: Ball
+    fig.add_trace(go.Scatter(
+        x=[ball_traj[0,0]], y=[ball_traj[0,1]], mode='markers', 
+        marker=dict(color='orange', size=10, line=dict(width=2, color='black')), name='Ball'
+    ))
+
+    # --- Build Animation Frames ---
+    frames = []
+    for f in range(num_frames):
+        frames.append(go.Frame(
+            data=[
+                go.Scatter(x=def_traj[f,:,0], y=def_traj[f,:,1]),
+                go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1]),
+                go.Scatter(x=[ball_traj[f,0]], y=[ball_traj[f,1]])
+            ],
+            name=str(f),
+            traces=[0, 1, 2] # Explicitly tell Plotly which traces to update
+        ))
+    fig.frames = frames
+
+    # --- Draw the Court ---
+    # Assuming draw_plotly_court is defined elsewhere in your utils
+    shapes = draw_plotly_court(xref="x", yref="y")
+    
+    # --- Layout & Controls ---
+    fig.update_layout(
+        title="Standard Play Animation",
+        shapes=shapes,
+        
+        # --- HIDE AXIS NUMBERS AND LINES ---
+        xaxis=dict(range=[0, 94], showgrid=False, zeroline=False, visible=False),
+        yaxis=dict(range=[0, 50], scaleanchor="x", scaleratio=1, showgrid=False, zeroline=False, visible=False),
+        
+        template="plotly_white",
+        
+        # --- MAXIMIZE COURT SIZE ---
+        width=900,   
+        height=450,   
+        margin=dict(l=0, r=0, t=50, b=80), # 0 margin on left/right to stretch the court
+        
+        # --- Playback Controls ---
+        updatemenus=[dict(
+            type="buttons", 
+            showactive=False,
+            x=0.0,
+            y=-0.05,  # Tucked slightly closer to the court now that axes are gone
+            xanchor="left",
+            yanchor="top",
+            buttons=[
+                dict(label="▶ Play", method="animate", args=[None, {"frame": {"duration": 40, "redraw": False}}]),
+                dict(label="⏸ Pause", method="animate", args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}])
+            ]
+        )],
+        sliders=[dict(
+            active=0,
+            x=0.1,
+            y=-0.05,  # Tucked slightly closer
+            xanchor="left",
+            yanchor="top",
+            len=0.9,
+            steps=[dict(method='animate', args=[[str(k)], dict(mode='immediate', frame=dict(duration=0, redraw=False))]) 
+                   for k in range(num_frames)]
+        )]
+    )
+    
+    return fig.show()
+
 def animate_comparison_play(off_traj, real_def_traj, sim_def_traj, ball_traj, ist_real, ist_sim):
     """
     Takes pre-calculated IST arrays and generates a side-by-side interactive comparison.
@@ -531,9 +658,6 @@ def animate_triple_comparison(sim_no_ist_traj, sim_ist_traj, real_def_traj,
     
     return fig.show(renderer="browser")
 
-import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 def animate_side_by_side_courts(sim_ist_traj, real_def_traj, ist_sim, ist_real, 
                                 off_traj, ball_traj, off_ids, 
                                 half_court='left', use_images=False):
