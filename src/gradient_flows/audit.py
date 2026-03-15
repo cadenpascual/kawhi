@@ -94,3 +94,73 @@ def create_trial_browser(df, db_path, study_name, animate_fn):
         trial_no=Dropdown(options=best_trials['trial_no'].tolist(), description='Optuna Trial:'),
         play_idx=IntSlider(min=0, max=len(df)-1, step=1, value=0, description='Play Index:')
     )
+
+def audit_final_results(df, triple_animate_fn):
+    """
+    Dashboard for browsing the final triple-comparison results.
+    Directly feeds 3D arrays from the DataFrame to the Plotly engine.
+    """
+    
+    def run_audit(play_idx):
+        row = df.iloc[play_idx]
+        num_f = len(row['ball_x_traj'])
+        
+        # Initialize the empty arrays
+        off_traj = np.zeros((num_f, 5, 2))
+        real_def_traj = np.zeros((num_f, 5, 2))
+        base_def_traj = np.zeros((num_f, 5, 2))
+        sim_def_traj = np.zeros((num_f, 5, 2))
+        
+        ist_real = np.zeros((num_f, 5))
+        ist_base = np.zeros((num_f, 5))
+        ist_sim = np.zeros((num_f, 5))
+        
+        # Reconstruct ALL data from their safe 1D columns
+        # Reconstruct ALL data, swapping X and Y so they run left-to-right!
+        for i in range(1, 6):
+            # 1. Offense
+            off_traj[:, i-1, 0] = np.array(row[f'off{i}_y_traj']) + 5.25
+            off_traj[:, i-1, 1] = np.array(row[f'off{i}_x_traj']) + 25.0
+            
+            # 2. Real Defense
+            real_def_traj[:, i-1, 0] = np.array(row[f'def{i}_y_traj']) + 5.25
+            real_def_traj[:, i-1, 1] = np.array(row[f'def{i}_x_traj']) + 25.0
+            
+            # 3. Baseline Simulation
+            base_def_traj[:, i-1, 0] = np.array(row[f'base_def{i}_y_traj']) + 5.25
+            base_def_traj[:, i-1, 1] = np.array(row[f'base_def{i}_x_traj']) + 25.0
+            
+            # 4. Optimized Simulation
+            sim_def_traj[:, i-1, 0] = np.array(row[f'sim_def{i}_y_traj']) + 5.25
+            sim_def_traj[:, i-1, 1] = np.array(row[f'sim_def{i}_x_traj']) + 25.0
+            
+            # 5. IST Values (Keep identical)
+            ist_real[:, i-1] = row[f'ist_real_{i}']
+            ist_base[:, i-1] = row[f'ist_base_{i}']
+            ist_sim[:, i-1] = row[f'ist_sim_{i}']
+
+        # 6. Extract Ball exactly the same way
+        ball_traj = np.column_stack([
+            np.array(row['ball_y_traj']) + 5.25, 
+            np.array(row['ball_x_traj']) + 25.0
+        ])
+        
+        # Launch Animation
+        fig = triple_animate_fn(
+            off_traj=off_traj,
+            real_def_traj=real_def_traj,
+            base_def_traj=base_def_traj,   
+            sim_def_traj=sim_def_traj,     
+            ball_traj=ball_traj,
+            ist_real=ist_real,     
+            ist_base=ist_base,     
+            ist_sim=ist_sim,       
+            half_court='left' # Now you can safely lock this to 'left' forever!
+        )
+        
+        fig.show()
+
+    interact(
+        run_audit, 
+        play_idx=IntSlider(min=0, max=len(df)-1, value=0, description='Select Play:')
+    )

@@ -290,149 +290,156 @@ def get_base64_image(pid, folder="../images", border_color="#1D428A"):
         print(f"Error on {pid}: {e}")
         return ""
 
-def animate_triple_comparison_old(sim_no_ist_traj, sim_ist_traj, real_def_traj, 
-                              ist_sim_no_ist, ist_sim_ist, ist_real, 
-                              off_traj, ball_traj, off_ids, use_images=True):
+def animate_triple_comparison(off_traj, real_def_traj, base_def_traj, sim_def_traj, 
+                              ball_traj, ist_real, ist_base, ist_sim, half_court='left'):
     """
-    Generates a 1x3 side-by-side interactive comparison.
-    Columns: [Real] | [Sim No IST] | [Sim With IST]
+    Generates a clean 1x3 side-by-side interactive comparison without images.
+    Columns: [Real] | [Baseline (Kinematic)] | [Optimized (JKO Threat)]
     """
+    # --- 1. SHAPE SAFETY ---
+    off_traj = np.array(off_traj).reshape(-1, 5, 2)
+    real_def_traj = np.array(real_def_traj).reshape(-1, 5, 2)
+    base_def_traj = np.array(base_def_traj).reshape(-1, 5, 2)
+    sim_def_traj = np.array(sim_def_traj).reshape(-1, 5, 2)
+    ball_traj = np.array(ball_traj).reshape(-1, 2)
+    ist_real = np.array(ist_real).reshape(-1, 5)
+    ist_base = np.array(ist_base).reshape(-1, 5)
+    ist_sim = np.array(ist_sim).reshape(-1, 5)
+    
+    
     num_frames = off_traj.shape[0]
     
-    # 1. Handle Optional Images
-    encoded_images = {}
-    if use_images:
-        encoded_images = {int(pid): get_base64_image(int(pid)) for pid in off_ids}
+    # Colors (Base is Purple, Sim is Blue)
+    C_OFF, C_REAL, C_BASE, C_SIM, C_BALL = '#C8102E', '#888888', '#800080', '#1D428A', '#ec7607'
     
-    img_size = 8 
-    text_y_offset = (img_size / 2) if use_images else 1.5
-    # Use markers+text if images are off, otherwise just text (to avoid overlapping the image)
-    off_mode = 'text' if use_images else 'markers+text'
+    x_range = [-2, 49] if half_court == 'left' else [45, 96]
+    y_range = [-2, 54]
 
     fig = make_subplots(
         rows=1, cols=3, 
-        subplot_titles=("Real Defense", "Simulated (No IST / Baseline)", "Simulated (With IST)"),
-        horizontal_spacing=0.02
+        subplot_titles=("Real NBA Defense", "Baseline Model", "Your Optimized Model"),
+        horizontal_spacing=0.01
     )
 
-    def get_labels(vals):
+    def get_dynamic_labels(vals):
         labels = []
-        halo = "text-shadow: 2px 2px 0 #fff, -2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff;"
-        for v in vals:
-            color = "red" if v > 1.00 else "black"
-            labels.append(f"<span style='{halo} color: {color};'><b>{v:.2f}</b></span>")
+        
+        # CSS trick to create a white outline (halo) around the text
+        halo = "text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;"
+        
+        # 1. Safely flatten the array, handling both clean arrays and "ragged" nested arrays
+        try:
+            vals_flat = np.array(vals, dtype=float).flatten()
+        except (ValueError, TypeError):
+            vals_flat = np.hstack(vals).astype(float)
+
+        # 2. Loop through the guaranteed flat floats
+        for v in vals_flat:
+            color_hex = C_OFF if v > 1.0 else 'black'
+            labels.append(f"<span style='{halo} color: {color_hex};'><b>{v:.2f}</b></span>")
+            
         return labels
+            
+    fancy_font = dict(family="Arial Black, sans-serif", size=10)
+    text_offset = 2.5 
 
-    def build_frame_images(f_idx):
-        if not use_images:
-            return []
-        frame_imgs = []
-        # Column mapping: 1=Real, 2=No IST, 3=With IST
-        for col, xref, yref in [(1, "x", "y"), (2, "x2", "y2"), (3, "x3", "y3")]:
-            for p_idx, pid in enumerate(off_ids):
-                pid_int = int(pid) 
-                if pid_int in encoded_images and encoded_images[pid_int]: 
-                    frame_imgs.append(dict(
-                        source=encoded_images[pid_int], 
-                        xref=xref, yref=yref,
-                        x=off_traj[f_idx, p_idx, 0],
-                        y=off_traj[f_idx, p_idx, 1],
-                        sizex=img_size, sizey=img_size,
-                        xanchor="center", yanchor="middle",
-                        layer="below",
-                        sizing="stretch"
-                    ))
-        return frame_imgs
+    # --- TRACE SETUP (Order: Offense -> Defense -> Labels -> Ball) ---
+    trajs = [real_def_traj, base_def_traj, sim_def_traj]
+    ist_vals_list = [ist_real, ist_base, ist_sim]
+    names = ['Real Defense', 'Baseline Defense', 'Optimized Defense']
+    colors = [C_REAL, C_BASE, C_SIM]
 
-    fancy_font = dict(family="Arial Black, sans-serif", size=15, color="black")
+    for i in range(3):
+        col = i + 1
+        traj = trajs[i]
+        ist_vals = ist_vals_list[i]
+        name = names[i]
+        def_color = colors[i]
 
-    # --- Column 1: Real Defense ---
-    fig.add_trace(go.Scatter(x=real_def_traj[0,:,0], y=real_def_traj[0,:,1], mode='markers', 
-                             marker=dict(color='blue', size=12), name='Defense'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=off_traj[0,:,0], y=off_traj[0,:,1] + text_y_offset, mode=off_mode, 
-                             text=get_labels(ist_real[0]), textposition="top center", 
-                             marker=dict(color='red', size=10), textfont=fancy_font, name='Offense'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=[ball_traj[0,0]], y=[ball_traj[0,1]], mode='markers', 
-                             marker=dict(color='orange', size=8, line=dict(width=2, color='black')), name='Ball'), row=1, col=1)
+        # 1. Offense
+        fig.add_trace(go.Scatter(x=off_traj[0,:,0], y=off_traj[0,:,1], mode='markers', marker=dict(color=C_OFF, size=12, line=dict(width=1, color='white')), showlegend=False), row=1, col=col)
+        # 2. Defense
+        fig.add_trace(go.Scatter(x=traj[0,:,0], y=traj[0,:,1], mode='markers', marker=dict(color=def_color, size=12, line=dict(width=2, color='white')), name=name), row=1, col=col)
+        # 3. Threat Labels
+        fig.add_trace(go.Scatter(x=off_traj[0,:,0], y=off_traj[0,:,1] + text_offset, mode='text', text=get_dynamic_labels(ist_vals[0]), textfont=fancy_font, showlegend=False), row=1, col=col)
+        # 4. Ball (Top layer)
+        fig.add_trace(go.Scatter(x=[ball_traj[0,0]], y=[ball_traj[0,1]], mode='markers', marker=dict(color=C_BALL, size=9, line=dict(width=1, color='black')), showlegend=False), row=1, col=col)
 
-    # --- Column 2: Simulated (No IST / Baseline) ---
-    fig.add_trace(go.Scatter(x=sim_no_ist_traj[0,:,0], y=sim_no_ist_traj[0,:,1], mode='markers', 
-                             marker=dict(color='blue', size=12, opacity=0.4), showlegend=False), row=1, col=2)
-    fig.add_trace(go.Scatter(x=off_traj[0,:,0], y=off_traj[0,:,1] + text_y_offset, mode=off_mode, 
-                             text=get_labels(ist_sim_no_ist[0]), textposition="top center", 
-                             marker=dict(color='red', size=10), textfont=fancy_font, showlegend=False), row=1, col=2)
-    fig.add_trace(go.Scatter(x=[ball_traj[0,0]], y=[ball_traj[0,1]], mode='markers', 
-                             marker=dict(color='orange', size=8, line=dict(width=2, color='black')), showlegend=False), row=1, col=2)
-
-    # --- Column 3: Simulated (With IST) ---
-    fig.add_trace(go.Scatter(x=sim_ist_traj[0,:,0], y=sim_ist_traj[0,:,1], mode='markers', 
-                             marker=dict(color='blue', size=12, opacity=0.7), showlegend=False), row=1, col=3)
-    fig.add_trace(go.Scatter(x=off_traj[0,:,0], y=off_traj[0,:,1] + text_y_offset, mode=off_mode, 
-                             text=get_labels(ist_sim_ist[0]), textposition="top center", 
-                             marker=dict(color='red', size=10), textfont=fancy_font, showlegend=False), row=1, col=3)
-    fig.add_trace(go.Scatter(x=[ball_traj[0,0]], y=[ball_traj[0,1]], mode='markers', 
-                             marker=dict(color='orange', size=8, line=dict(width=2, color='black')), showlegend=False), row=1, col=3)
-
-    # --- Build Animation Frames ---
+    # --- ANIMATION FRAMES ---
     frames = []
     for f in range(num_frames):
-        frames.append(go.Frame(
-            data=[
-                # Col 1
-                go.Scatter(x=real_def_traj[f,:,0], y=real_def_traj[f,:,1]),
-                go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1] + text_y_offset, text=get_labels(ist_real[f])),
-                go.Scatter(x=[ball_traj[f,0]], y=[ball_traj[f,1]]),
-                # Col 2 (No IST)
-                go.Scatter(x=sim_no_ist_traj[f,:,0], y=sim_no_ist_traj[f,:,1]),
-                go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1] + text_y_offset, text=get_labels(ist_sim_no_ist[f])),
-                go.Scatter(x=[ball_traj[f,0]], y=[ball_traj[f,1]]),
-                # Col 3 (With IST)
-                go.Scatter(x=sim_ist_traj[f,:,0], y=sim_ist_traj[f,:,1]),
-                go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1] + text_y_offset, text=get_labels(ist_sim_ist[f])),
+        frame_data = []
+        for i in range(3):
+            traj = trajs[i]
+            ist_vals = ist_vals_list[i]
+            frame_data.extend([
+                go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1]), 
+                go.Scatter(x=traj[f,:,0], y=traj[f,:,1]), 
+                go.Scatter(x=off_traj[f,:,0], y=off_traj[f,:,1] + text_offset, text=get_dynamic_labels(ist_vals[f])), 
                 go.Scatter(x=[ball_traj[f,0]], y=[ball_traj[f,1]])
-            ],
-            layout=go.Layout(images=build_frame_images(f)),
-            name=str(f),
-            traces=[0, 1, 2, 3, 4, 5, 6, 7, 8] 
-        ))
+            ])
+        
+        # 12 traces total (4 per column)
+        frames.append(go.Frame(data=frame_data, name=str(f), traces=list(range(12))))
     fig.frames = frames
 
-    # Court shapes remain unchanged, using same xref/yref logic
-    shapes_1 = draw_plotly_court(xref="x", yref="y")
-    shapes_2 = draw_plotly_court(xref="x2", yref="y2")
-    shapes_3 = draw_plotly_court(xref="x3", yref="y3")
-    
-    # Common axis settings to hide numbers and grid lines
-    axis_clean = dict(range=[-5, 94], showgrid=False, zeroline=False, showticklabels=False)
-    yaxis_clean = dict(range=[-5, 55], scaleanchor="x", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False)
+    axis_config = dict(range=x_range, showgrid=False, zeroline=False, showticklabels=False, fixedrange=True, constrain='domain')
+    yaxis_config = dict(range=y_range, scaleanchor="x", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False, fixedrange=True)
+
+    # --- CONSOLIDATED LAYOUT ---
+    shapes = draw_plotly_court(xref="x", yref="y") + draw_plotly_court(xref="x2", yref="y2") + draw_plotly_court(xref="x3", yref="y3")
 
     fig.update_layout(
-        title="IST Model Comparison: Real vs. Baseline vs. Enhanced",
-        shapes=shapes_1 + shapes_2 + shapes_3,
-        images=build_frame_images(0),
-        template="plotly_white",
-        width=1800, height=600,
-        margin=dict(l=20, r=20, t=100, b=20),
-        xaxis=axis_clean, yaxis=yaxis_clean,
-        xaxis2=axis_clean, yaxis2=dict(range=[-5, 55], scaleanchor="x2", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False),
-        xaxis3=axis_clean, yaxis3=dict(range=[-5, 55], scaleanchor="x3", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False),
+        title=dict(
+            text="Triple Comparison: Real vs Baseline vs Optimized", 
+            x=0.5, xanchor='center', y=0.98,
+            font=dict(size=18, family="Arial Black")
+        ),
+        shapes=shapes,
+        template="plotly_white", 
+        width=1000,   
+        height=520,   # Adjusted for better fit
+        margin=dict(l=5, r=5, t=60, b=120), # Tightened bottom margin
+        
+        xaxis=axis_config, yaxis=yaxis_config,
+        xaxis2=axis_config, yaxis2=dict(range=y_range, scaleanchor="x2", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
+        xaxis3=axis_config, yaxis3=dict(range=y_range, scaleanchor="x3", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
+        
+        legend=dict(orientation="h", yanchor="top", y=-0.02, xanchor="center", x=0.5),
+        
         updatemenus=[dict(
-            type="buttons", x=0.0, y=-0.15, xanchor="left", yanchor="top",
+            type="buttons", x=0.5, y=-0.12, # Pulled up
+            xanchor="center", yanchor="top", direction="right",
             buttons=[
-                dict(label="▶ Play", method="animate", args=[None, {"frame": {"duration": 40, "redraw": True}}]),
+                dict(label="▶ Play", method="animate", args=[None, {"frame": {"duration": 40, "redraw": False}, "fromcurrent": True}]),
                 dict(label="⏸ Pause", method="animate", args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}])
             ]
         )],
+        
+        # --- ENHANCED SLIDER ---
         sliders=[dict(
-            active=0, x=0.1, y=-0.15, len=0.85, xanchor="left", yanchor="top",
-            steps=[dict(method='animate', args=[[str(k)], dict(mode='immediate', frame=dict(duration=0, redraw=True))]) 
-                   for k in range(num_frames)]
+            active=0,
+            x=0.5, y=-0.22, # Pulled up from the bottom
+            len=0.85, 
+            xanchor="center", yanchor="top",
+            pad={"t": 20, "b": 10}, # Adds space around the bar
+            currentvalue={
+                "visible": True, 
+                "prefix": "Frame: ", 
+                "xanchor": "right", 
+                "font": {"size": 14, "color": "#666"}
+            },
+            transition={"duration": 0}, # Makes it feel snappy
+            # Styling the bar itself
+            tickcolor="#666",
+            font={"color": "#666"},
+            steps=[dict(method='animate', args=[[str(k)], dict(mode='immediate', frame=dict(duration=0, redraw=False))]) for k in range(num_frames)]
         )]
     )
     
-    return fig.show(renderer="browser")
+    return fig
 
-def animate_triple_comparison(sim_no_ist_traj, sim_ist_traj, real_def_traj, 
+def animate_ontop_comparison(sim_no_ist_traj, sim_ist_traj, real_def_traj, 
                               ist_sim_no_ist, ist_sim_ist, ist_real, 
                               off_traj, ball_traj, off_ids, shot_frame, use_images=True):
     """

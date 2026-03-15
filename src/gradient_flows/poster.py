@@ -3,8 +3,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import seaborn as sns
+from scipy import stats
 
 from src.gradient_flows.court import draw_court_matplotlib, draw_plotly_court
+from src.viz.court import draw_half_court_ft
 
 # --- Poster Functions --- #
 def generate_2x3_poster_figure(sim_ist_traj, real_def_traj, off_traj, ball_traj, 
@@ -396,4 +398,129 @@ def plot_ist_population_shift(summary_df, filename="ist_distribution_shift_final
     
     plt.tight_layout()
     plt.savefig(filename, facecolor=fig.get_facecolor())
+    plt.show()
+
+
+def plot_ist_optimization_map(final_df, filename="ist_optimization_heatmap.png"):
+    # 1. Coordinate Extraction
+    def get_val_at_release(row, col):
+        try:
+            # Accessing the N-1 frame
+            idx = int(row['local_release_idx']) - 1
+            return row[col][idx]
+        except:
+            return np.nan
+
+    # Create plotting columns
+    final_df['x_release'] = final_df.apply(lambda r: get_val_at_release(r, 'off1_x_traj'), axis=1)
+    final_df['y_release'] = final_df.apply(lambda r: get_val_at_release(r, 'off1_y_traj'), axis=1)
+    # The 'Dividend': The specific value-add of the IST weights
+    final_df['ist_dividend'] = final_df['Base_IST_Total'] - final_df['Sim_IST_Total']
+
+    # 2. Setup Plot
+    plt.style.use('default')
+    fig, ax = plt.subplots(figsize=(12, 11), dpi=300)
+    fig.patch.set_facecolor('#BEC0C2'); fig.patch.set_alpha(0.2)
+    ax.set_facecolor('none')
+
+    # 3. Draw your specific court
+    draw_half_court_ft(ax, color='#1D428A', lw=3, outer_lines=True)
+
+    # 4. Generate the Heatmap (Hexbin)
+    # C=ist_dividend ensures we are mapping the SAVINGS, not just shot frequency
+    hb = ax.hexbin(final_df['x_release'], final_df['y_release'], 
+               C=final_df['ist_dividend'], gridsize=20, 
+               cmap='YlOrRd', reduce_C_function=np.mean, 
+               alpha=0.8, zorder=2)
+
+    # 5. Dashboard Elements (No-import Manual Colorbar)
+    # Define a small axis inside the figure for the colorbar
+    # [x, y, width, height] in axes coordinates (0 to 1)
+    cax = ax.inset_axes([1.02, 0.1, 0.03, 0.8]) 
+
+    cb = fig.colorbar(hb, cax=cax)
+    cb.set_label('Avg IST Savings (Units)', fontsize=12, fontweight='bold', color='#1D428A')
+
+    # Reset the title and layout as before
+    ax.set_title("IST OPTIMIZATION MAP", fontsize=24, fontweight='black', pad=30, color='#1D428A')
+        
+    # Set limits to match NBA half-court in feet
+    ax.set_xlim(-26, 26)
+    ax.set_ylim(-6, 45)
+    plt.axis('off')
+    
+    plt.tight_layout()
+    plt.savefig(filename, facecolor=fig.get_facecolor())
+    plt.show()
+
+def plot_triple_ist_shift(final_df, filename="ist_triple_shift_dashboard.png"):
+    plt.style.use('default')
+    
+    # 1. Branding & Colors
+    # Grey for Real, Dark Grey/Silver for Base, Blue for Sim, Red for Callouts
+    C_REAL, C_BASE, C_SIM, C_OFF, C_BG = '#888888', '#555555', '#1D428A', '#C8102E', '#BEC0C2'
+    
+    # 2. Calculate Stats for the Dashboard
+    real_mean = final_df['Real_IST_Total'].mean()
+    base_mean = final_df['Base_IST_Total'].mean()
+    sim_mean = final_df['Sim_IST_Total'].mean()
+    
+    total_waste = real_mean - sim_mean   # 76.74
+    ist_savings = base_mean - sim_mean   # 37.28
+
+    # 3. Figure Setup
+    fig, ax = plt.subplots(figsize=(16, 10), dpi=300)
+    fig.patch.set_facecolor(C_BG); fig.patch.set_alpha(0.15); ax.set_facecolor('none')
+    
+    # 4. Plot Distributions
+    # Real: The baseline chaotic reality
+    sns.kdeplot(final_df['Real_IST_Total'], fill=True, color=C_REAL, lw=4, 
+                label='Actual NBA Defense', alpha=0.2, ax=ax)
+    
+    # Base: The smart model without physical weighting
+    sns.kdeplot(final_df['Base_IST_Total'], fill=False, color=C_BASE, lw=4, ls='--', 
+                label='Base Sim Model', ax=ax)
+    
+    # Sim: The fully optimized model (Final)
+    sns.kdeplot(final_df['Sim_IST_Total'], fill=True, color=C_SIM, lw=6, 
+                label='Your Sim Model', alpha=0.5, ax=ax)
+    
+    # 5. Reference Lines (Medians/Means)
+    ax.axvline(real_mean, color=C_REAL, ls=':', lw=3, alpha=0.6)
+    ax.axvline(sim_mean, color=C_SIM, ls=':', lw=3, alpha=0.8)
+
+    # 6. THE RECOVERY GAP ARROW
+    y_limit = ax.get_ylim()[1]
+    arrow_y = y_limit * 0.40 
+    ax.annotate('', xy=(sim_mean, arrow_y), xytext=(real_mean, arrow_y),
+                arrowprops=dict(arrowstyle='<->', color=C_OFF, lw=5))
+    ax.text((real_mean + sim_mean)/2, arrow_y + (y_limit * 0.02), "AVG IST SAVED", 
+            color=C_OFF, fontweight='black', fontsize=16, ha='center')
+
+    # 7. Titles & Labels
+    ax.set_title("Total IST Distribution per Model", fontsize=42, fontweight='black', 
+                 pad=60, color=C_SIM, loc='center')
+    ax.set_xlabel("Team IST Per Play", fontsize=24, fontweight='bold', labelpad=20)
+    ax.set_ylabel("Frequency of Outcomes", fontsize=24, fontweight='bold', labelpad=20)
+    
+    # 8. THE HERO DASHBOARD (Top Right)
+    ax.legend(fontsize=18, loc='upper right', frameon=True, shadow=True, 
+              facecolor='white', edgecolor=C_SIM, borderpad=1.2)
+
+    stats_text = (f"Real Model Savings: {total_waste:.2f} Units IST\n"
+                  f"Base Model Savings: {ist_savings:.2f} Units IST")
+    
+    ax.text(0.97, 0.62, stats_text, transform=ax.transAxes,
+            fontsize=20, fontweight='black', color='white', 
+            ha='right', va='top',
+            bbox=dict(boxstyle="round,pad=1.0", facecolor=C_OFF, edgecolor='none'))
+
+    # 9. Final Polish
+    for s in ['top', 'right']: ax.spines[s].set_visible(False)
+    for s in ['left', 'bottom']:
+        ax.spines[s].set_color(C_SIM); ax.spines[s].set_linewidth(4)
+    
+    ax.tick_params(axis='both', labelsize=18, width=3, length=10)
+    
+    plt.tight_layout()
     plt.show()
